@@ -9,6 +9,43 @@ The platform has two layers:
 - **Public component** — a queryable API delivering normalized, entity-level data with filtering and pagination
 - **Enterprise extension** (future) — private data integration allowing organizations to layer proprietary datasets on top of the public foundation
 
+### Architecture
+
+```mermaid
+flowchart LR
+    subgraph sources ["Data Sources"]
+        S1([Census Bureau])
+        S2([World Bank])
+        S3([WHO / data.gov])
+    end
+
+    subgraph pipeline ["Ingestion Pipeline"]
+        I1[census_acs5.py]
+        I2[future scripts...]
+    end
+
+    subgraph store ["PostgreSQL — datamart"]
+        G[(geo_entities)]
+        E[(census_acs5)]
+        F[(future tables...)]
+    end
+
+    subgraph api ["Django REST API"]
+        V1["GET /api/geo/"]
+        V2["GET /api/geo/:fips/"]
+        V3["GET /api/estimates/"]
+    end
+
+    C([API Consumers\nenterprises / apps])
+
+    S1 --> I1
+    S2 & S3 --> I2
+    I1 --> G & E
+    I2 --> F
+    G & E & F --> V1 & V2 & V3
+    V1 & V2 & V3 --> C
+```
+
 ---
 
 ## Repository Layout
@@ -84,26 +121,27 @@ The Census Bureau exposes ACS5 data via a JSON REST API at `https://api.census.g
 
 ### Flow
 
-```
-Census API
-    │
-    ▼
-_fetch(year, geo_for)          # one HTTP GET per year × geography level
-    │                          # returns list of raw dicts (headers stripped)
-    ▼
-normalize_state / normalize_county
-    │   _int()  — coerces strings, treats sentinel "-666666666" and
-    │             negatives as NULL
-    │   _pct()  — divides numerator/denominator, returns None if either
-    │             is NULL or denominator is zero
-    │
-    ▼
-load(geos, estimates)
-    │   geo_entities upserted first (FK target)
-    │   census_acs5 upserted second
-    │   both via execute_batch(page_size=500) inside a single transaction
-    ▼
-PostgreSQL
+```mermaid
+flowchart TD
+    A([Census Bureau API\napi.census.gov]) -->|HTTP GET per year × geo level| B
+
+    subgraph ingestion ["ingestion/census_acs5.py"]
+        B["_fetch(year, geo_for)\nreturns list of raw dicts"]
+        B --> C{"geo level?"}
+        C -->|state| D[normalize_state]
+        C -->|county| E[normalize_county]
+        D & E --> F["_int() — sentinel / negative → NULL\n_pct() — ratio with null-safe denominator"]
+        F --> G["load(geos, estimates)\nexecute_batch, page_size=500"]
+    end
+
+    subgraph db ["PostgreSQL — datamart"]
+        H[(geo_entities\nstate + county FIPS)]
+        I[(census_acs5\nestimates × year)]
+        H --> I
+    end
+
+    G -->|"upsert geo_entities first (FK target)"| H
+    G -->|"upsert census_acs5 second"| I
 ```
 
 ### Key design decisions
