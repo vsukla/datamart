@@ -1,4 +1,3 @@
-import pytest
 from django.test import TestCase
 from django.db import connection
 from census.models import GeoEntity, CensusAcs5
@@ -121,3 +120,20 @@ class GeoAPITest(TestCase):
         data = resp.json()
         self.assertIn("count", data)
         self.assertIn("results", data)
+
+    # --- validation ---
+
+    def test_geo_list_invalid_geo_type_returns_400(self):
+        resp = self.client.get("/api/geo/?geo_type=invalid")
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn("geo_type", resp.json())
+
+    def test_estimates_invalid_geo_type_returns_400(self):
+        resp = self.client.get("/api/estimates/?geo_type=staet")
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn("geo_type", resp.json())
+
+    def test_estimates_invalid_year_returns_400(self):
+        resp = self.client.get("/api/estimates/?year=abc")
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn("year", resp.json())
