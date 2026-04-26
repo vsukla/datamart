@@ -5,8 +5,11 @@ from dotenv import load_dotenv
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR.parent / "config" / ".env")
 
-SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "dev-only-insecure-key-change-in-production")
 DEBUG = os.environ.get("DJANGO_DEBUG", "true").lower() == "true"
+
+if not DEBUG and "DJANGO_SECRET_KEY" not in os.environ:
+    raise RuntimeError("DJANGO_SECRET_KEY must be set when DEBUG=false")
+SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "dev-only-insecure-key-change-in-production")
 ALLOWED_HOSTS = os.environ.get("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
 
 INSTALLED_APPS = [
