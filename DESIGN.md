@@ -59,11 +59,12 @@ datamart/
 │   └── census_acs5.py        # Census ACS5 fetch → normalize → load
 ├── schema/
 │   └── census.sql            # DDL for geo_entities and census_acs5 tables
-├── api/
+├── server/
 │   ├── manage.py
 │   ├── requirements.txt
 │   ├── datamart_api/         # Django project settings, urls, wsgi
-│   └── census/               # Django app: models, serializers, views, urls
+│   ├── census/               # Django app: REST API (models, serializers, views, urls)
+│   └── dashboard/            # Django app: web dashboard
 ├── tests/
 │   ├── test_ingestion.py     # Unit tests for ingestion helpers
 │   └── test_api.py           # Django integration tests for API endpoints
@@ -155,7 +156,7 @@ flowchart TD
 
 ## API Layer
 
-Source: [`api/`](api/)
+Source: [`server/`](server/)
 
 Built with Django 6 and Django REST Framework. The models mirror the existing PostgreSQL schema using `managed = False` — Django reads and writes to the tables but does not manage their lifecycle.
 
