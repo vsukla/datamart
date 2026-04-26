@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import GeoEntity, CensusAcs5
+from .models import GeoEntity, CensusAcs5, AggNationalSummary, AggStateSummary, AggRanking, AggYoY
 
 
 class EstimateSerializer(serializers.ModelSerializer):
@@ -30,6 +30,46 @@ class GeoDetailSerializer(serializers.ModelSerializer):
     class Meta:
         model = GeoEntity
         fields = ["fips", "geo_type", "name", "state_fips", "estimates"]
+
+
+class AggNationalSummarySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = AggNationalSummary
+        fields = [
+            "year", "total_population",
+            "avg_median_income", "avg_pct_bachelors", "avg_median_home_value",
+            "avg_pct_owner_occupied", "avg_pct_poverty", "avg_unemployment_rate",
+            "computed_at",
+        ]
+
+
+class AggStateSummarySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = AggStateSummary
+        fields = [
+            "state_fips", "year", "total_population",
+            "avg_median_income", "avg_pct_bachelors", "avg_median_home_value",
+            "avg_pct_owner_occupied", "avg_pct_poverty", "avg_unemployment_rate",
+            "computed_at",
+        ]
+
+
+class AggRankingSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = AggRanking
+        fields = [
+            "fips", "state_fips", "geo_type", "year", "metric",
+            "value", "rank", "percentile", "peer_count", "computed_at",
+        ]
+
+
+class AggYoYSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = AggYoY
+        fields = [
+            "fips", "state_fips", "geo_type", "year", "metric",
+            "value", "prev_value", "change_abs", "change_pct", "computed_at",
+        ]
 
 
 class EstimateWithGeoSerializer(serializers.ModelSerializer):

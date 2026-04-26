@@ -1,8 +1,12 @@
 from django.db.models import Prefetch
 from rest_framework import generics
 from rest_framework.exceptions import ValidationError
-from .models import GeoEntity, CensusAcs5
-from .serializers import GeoListSerializer, GeoDetailSerializer, EstimateWithGeoSerializer
+from .models import GeoEntity, CensusAcs5, AggNationalSummary, AggStateSummary, AggRanking, AggYoY
+from .serializers import (
+    GeoListSerializer, GeoDetailSerializer, EstimateWithGeoSerializer,
+    AggNationalSummarySerializer, AggStateSummarySerializer,
+    AggRankingSerializer, AggYoYSerializer,
+)
 
 VALID_GEO_TYPES = {"state", "county"}
 
@@ -72,4 +76,85 @@ class EstimatesListView(generics.ListAPIView):
             qs = qs.filter(geo__state_fips=state_fips)
         if year is not None:
             qs = qs.filter(year=year)
+        return qs
+
+
+VALID_METRICS = {
+    "median_income", "pct_bachelors", "median_home_value",
+    "pct_owner_occupied", "pct_poverty", "unemployment_rate",
+}
+
+
+def _validate_metric(value):
+    if value and value not in VALID_METRICS:
+        raise ValidationError({"metric": f"Must be one of: {', '.join(sorted(VALID_METRICS))}."})
+    return value
+
+
+class AggNationalSummaryView(generics.ListAPIView):
+    """GET /api/aggregates/national/  — optional ?year filter"""
+    serializer_class = AggNationalSummarySerializer
+
+    def get_queryset(self):
+        qs = AggNationalSummary.objects.all()
+        year = _validate_year(self.request.query_params.get("year"))
+        if year is not None:
+            qs = qs.filter(year=year)
+        return qs
+
+
+class AggStateSummaryView(generics.ListAPIView):
+    """GET /api/aggregates/state-summary/  — optional ?state_fips, ?year"""
+    serializer_class = AggStateSummarySerializer
+
+    def get_queryset(self):
+        qs = AggStateSummary.objects.all()
+        state_fips = self.request.query_params.get("state_fips")
+        year = _validate_year(self.request.query_params.get("year"))
+        if state_fips:
+            qs = qs.filter(state_fips=state_fips)
+        if year is not None:
+            qs = qs.filter(year=year)
+        return qs
+
+
+class AggRankingsView(generics.ListAPIView):
+    """GET /api/aggregates/rankings/  — optional ?geo_type, ?state_fips, ?year, ?metric"""
+    serializer_class = AggRankingSerializer
+
+    def get_queryset(self):
+        qs = AggRanking.objects.all()
+        geo_type = _validate_geo_type(self.request.query_params.get("geo_type"))
+        state_fips = self.request.query_params.get("state_fips")
+        year = _validate_year(self.request.query_params.get("year"))
+        metric = _validate_metric(self.request.query_params.get("metric"))
+        if geo_type:
+            qs = qs.filter(geo_type=geo_type)
+        if state_fips:
+            qs = qs.filter(state_fips=state_fips)
+        if year is not None:
+            qs = qs.filter(year=year)
+        if metric:
+            qs = qs.filter(metric=metric)
+        return qs
+
+
+class AggYoYView(generics.ListAPIView):
+    """GET /api/aggregates/yoy/  — optional ?geo_type, ?state_fips, ?year, ?metric"""
+    serializer_class = AggYoYSerializer
+
+    def get_queryset(self):
+        qs = AggYoY.objects.all()
+        geo_type = _validate_geo_type(self.request.query_params.get("geo_type"))
+        state_fips = self.request.query_params.get("state_fips")
+        year = _validate_year(self.request.query_params.get("year"))
+        metric = _validate_metric(self.request.query_params.get("metric"))
+        if geo_type:
+            qs = qs.filter(geo_type=geo_type)
+        if state_fips:
+            qs = qs.filter(state_fips=state_fips)
+        if year is not None:
+            qs = qs.filter(year=year)
+        if metric:
+            qs = qs.filter(metric=metric)
         return qs

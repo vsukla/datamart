@@ -38,3 +38,74 @@ class CensusAcs5(models.Model):
         db_table = "census_acs5"
         managed = False
         ordering = ["year"]
+
+
+class AggNationalSummary(models.Model):
+    year = models.SmallIntegerField(unique=True)
+    total_population = models.BigIntegerField(null=True)
+    avg_median_income = models.DecimalField(max_digits=10, decimal_places=0, null=True)
+    avg_pct_bachelors = models.DecimalField(max_digits=5, decimal_places=2, null=True)
+    avg_median_home_value = models.DecimalField(max_digits=10, decimal_places=0, null=True)
+    avg_pct_owner_occupied = models.DecimalField(max_digits=5, decimal_places=2, null=True)
+    avg_pct_poverty = models.DecimalField(max_digits=5, decimal_places=2, null=True)
+    avg_unemployment_rate = models.DecimalField(max_digits=5, decimal_places=2, null=True)
+    computed_at = models.DateTimeField(null=True)
+
+    class Meta:
+        db_table = "agg_national_summary"
+        managed = False
+        ordering = ["year"]
+
+
+class AggStateSummary(models.Model):
+    state_fips = models.CharField(max_length=2)
+    year = models.SmallIntegerField()
+    total_population = models.BigIntegerField(null=True)
+    avg_median_income = models.DecimalField(max_digits=10, decimal_places=0, null=True)
+    avg_pct_bachelors = models.DecimalField(max_digits=5, decimal_places=2, null=True)
+    avg_median_home_value = models.DecimalField(max_digits=10, decimal_places=0, null=True)
+    avg_pct_owner_occupied = models.DecimalField(max_digits=5, decimal_places=2, null=True)
+    avg_pct_poverty = models.DecimalField(max_digits=5, decimal_places=2, null=True)
+    avg_unemployment_rate = models.DecimalField(max_digits=5, decimal_places=2, null=True)
+    computed_at = models.DateTimeField(null=True)
+
+    class Meta:
+        db_table = "agg_state_summary"
+        managed = False
+        ordering = ["state_fips", "year"]
+
+
+class AggRanking(models.Model):
+    fips = models.CharField(max_length=5)
+    state_fips = models.CharField(max_length=2)
+    geo_type = models.CharField(max_length=10)
+    year = models.SmallIntegerField()
+    metric = models.CharField(max_length=30)
+    value = models.DecimalField(max_digits=12, decimal_places=2, null=True)
+    rank = models.IntegerField(null=True)
+    percentile = models.DecimalField(max_digits=5, decimal_places=2, null=True)
+    peer_count = models.IntegerField(null=True)
+    computed_at = models.DateTimeField(null=True)
+
+    class Meta:
+        db_table = "agg_rankings"
+        managed = False
+        ordering = ["geo_type", "year", "metric", "rank"]
+
+
+class AggYoY(models.Model):
+    fips = models.CharField(max_length=5)
+    state_fips = models.CharField(max_length=2)
+    geo_type = models.CharField(max_length=10)
+    year = models.SmallIntegerField()
+    metric = models.CharField(max_length=30)
+    value = models.DecimalField(max_digits=12, decimal_places=2, null=True)
+    prev_value = models.DecimalField(max_digits=12, decimal_places=2, null=True)
+    change_abs = models.DecimalField(max_digits=12, decimal_places=2, null=True)
+    change_pct = models.DecimalField(max_digits=7, decimal_places=2, null=True)
+    computed_at = models.DateTimeField(null=True)
+
+    class Meta:
+        db_table = "agg_yoy"
+        managed = False
+        ordering = ["fips", "metric", "year"]
