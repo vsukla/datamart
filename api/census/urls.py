@@ -2,6 +2,7 @@ from django.urls import path
 from .views import (
     GeoListView, GeoDetailView, EstimatesListView,
     AggNationalSummaryView, AggStateSummaryView, AggRankingsView, AggYoYView,
+    DashboardView,
 )
 
 urlpatterns = [
@@ -12,4 +13,5 @@ urlpatterns = [
     path("aggregates/state-summary/", AggStateSummaryView.as_view()),
     path("aggregates/rankings/", AggRankingsView.as_view()),
     path("aggregates/yoy/", AggYoYView.as_view()),
+    path("dashboard/", DashboardView.as_view()),
 ]
