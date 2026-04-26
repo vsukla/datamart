@@ -1,6 +1,6 @@
 from django.test import TestCase
 from django.db import connection
-from census.models import GeoEntity, CensusAcs5
+from census.models import GeoEntity, CensusAcs5, AggNationalSummary, AggStateSummary, AggRanking, AggYoY
 
 
 class GeoAPITest(TestCase):
@@ -137,3 +137,235 @@ class GeoAPITest(TestCase):
         resp = self.client.get("/api/estimates/?year=abc")
         self.assertEqual(resp.status_code, 400)
         self.assertIn("year", resp.json())
+
+
+class AggregateAPITest(TestCase):
+    @classmethod
+    def setUpClass(cls):
+        with connection.schema_editor() as editor:
+            editor.create_model(AggNationalSummary)
+            editor.create_model(AggStateSummary)
+            editor.create_model(AggRanking)
+            editor.create_model(AggYoY)
+        super().setUpClass()
+
+    @classmethod
+    def tearDownClass(cls):
+        super().tearDownClass()
+        with connection.schema_editor() as editor:
+            editor.delete_model(AggYoY)
+            editor.delete_model(AggRanking)
+            editor.delete_model(AggStateSummary)
+            editor.delete_model(AggNationalSummary)
+
+    @classmethod
+    def setUpTestData(cls):
+        AggNationalSummary.objects.create(year=2021, total_population=330000000, avg_median_income=65000)
+        AggNationalSummary.objects.create(year=2022, total_population=332000000, avg_median_income=67000)
+
+        AggStateSummary.objects.create(state_fips="06", year=2021, avg_median_income=76000)
+        AggStateSummary.objects.create(state_fips="06", year=2022, avg_median_income=80000)
+        AggStateSummary.objects.create(state_fips="48", year=2022, avg_median_income=63000)
+
+        AggRanking.objects.create(fips="06", state_fips="06", geo_type="state", year=2022,
+                                  metric="median_income", value=80000, rank=1, percentile="100.00", peer_count=2)
+        AggRanking.objects.create(fips="48", state_fips="48", geo_type="state", year=2022,
+                                  metric="median_income", value=63000, rank=2, percentile="50.00", peer_count=2)
+        AggRanking.objects.create(fips="06037", state_fips="06", geo_type="county", year=2022,
+                                  metric="median_income", value=75000, rank=1, percentile="100.00", peer_count=1)
+
+        AggYoY.objects.create(fips="06", state_fips="06", geo_type="state", year=2022,
+                              metric="median_income", value=80000, prev_value=76000, change_abs=4000, change_pct="5.26")
+        AggYoY.objects.create(fips="48", state_fips="48", geo_type="state", year=2022,
+                              metric="pct_poverty", value="13.50", prev_value="14.00", change_abs="-0.50", change_pct="-3.57")
+
+    # --- /api/aggregates/national/ ---
+
+    def test_national_returns_all(self):
+        resp = self.client.get("/api/aggregates/national/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()["count"], 2)
+
+    def test_national_filter_year(self):
+        resp = self.client.get("/api/aggregates/national/?year=2022")
+        data = resp.json()
+        self.assertEqual(data["count"], 1)
+        self.assertEqual(data["results"][0]["year"], 2022)
+
+    def test_national_fields(self):
+        resp = self.client.get("/api/aggregates/national/?year=2022")
+        r = resp.json()["results"][0]
+        self.assertIn("total_population", r)
+        self.assertIn("avg_median_income", r)
+        self.assertIn("avg_pct_poverty", r)
+
+    def test_national_invalid_year_returns_400(self):
+        resp = self.client.get("/api/aggregates/national/?year=abc")
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn("year", resp.json())
+
+    # --- /api/aggregates/state-summary/ ---
+
+    def test_state_summary_returns_all(self):
+        resp = self.client.get("/api/aggregates/state-summary/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()["count"], 3)
+
+    def test_state_summary_filter_state_fips(self):
+        resp = self.client.get("/api/aggregates/state-summary/?state_fips=06")
+        data = resp.json()
+        self.assertEqual(data["count"], 2)
+        for r in data["results"]:
+            self.assertEqual(r["state_fips"], "06")
+
+    def test_state_summary_filter_year(self):
+        resp = self.client.get("/api/aggregates/state-summary/?year=2022")
+        self.assertEqual(resp.json()["count"], 2)
+
+    def test_state_summary_filter_state_and_year(self):
+        resp = self.client.get("/api/aggregates/state-summary/?state_fips=06&year=2022")
+        data = resp.json()
+        self.assertEqual(data["count"], 1)
+        self.assertEqual(data["results"][0]["avg_median_income"], "80000")
+
+    def test_state_summary_invalid_year_returns_400(self):
+        resp = self.client.get("/api/aggregates/state-summary/?year=bad")
+        self.assertEqual(resp.status_code, 400)
+
+    # --- /api/aggregates/rankings/ ---
+
+    def test_rankings_returns_all(self):
+        resp = self.client.get("/api/aggregates/rankings/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()["count"], 3)
+
+    def test_rankings_filter_geo_type(self):
+        resp = self.client.get("/api/aggregates/rankings/?geo_type=state")
+        self.assertEqual(resp.json()["count"], 2)
+
+    def test_rankings_filter_state_fips(self):
+        resp = self.client.get("/api/aggregates/rankings/?state_fips=06")
+        data = resp.json()
+        for r in data["results"]:
+            self.assertEqual(r["state_fips"], "06")
+
+    def test_rankings_filter_metric(self):
+        resp = self.client.get("/api/aggregates/rankings/?metric=median_income")
+        self.assertEqual(resp.json()["count"], 3)
+
+    def test_rankings_filter_year(self):
+        resp = self.client.get("/api/aggregates/rankings/?year=2022")
+        self.assertEqual(resp.json()["count"], 3)
+
+    def test_rankings_fields(self):
+        resp = self.client.get("/api/aggregates/rankings/?state_fips=06&geo_type=state")
+        r = resp.json()["results"][0]
+        self.assertIn("rank", r)
+        self.assertIn("percentile", r)
+        self.assertIn("peer_count", r)
+
+    def test_rankings_invalid_metric_returns_400(self):
+        resp = self.client.get("/api/aggregates/rankings/?metric=bogus")
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn("metric", resp.json())
+
+    def test_rankings_invalid_geo_type_returns_400(self):
+        resp = self.client.get("/api/aggregates/rankings/?geo_type=nation")
+        self.assertEqual(resp.status_code, 400)
+
+    # --- /api/aggregates/yoy/ ---
+
+    def test_yoy_returns_all(self):
+        resp = self.client.get("/api/aggregates/yoy/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()["count"], 2)
+
+    def test_yoy_filter_metric(self):
+        resp = self.client.get("/api/aggregates/yoy/?metric=median_income")
+        self.assertEqual(resp.json()["count"], 1)
+
+    def test_yoy_filter_state_fips(self):
+        resp = self.client.get("/api/aggregates/yoy/?state_fips=06")
+        data = resp.json()
+        self.assertEqual(data["count"], 1)
+        self.assertEqual(data["results"][0]["fips"], "06")
+
+    def test_yoy_filter_geo_type(self):
+        resp = self.client.get("/api/aggregates/yoy/?geo_type=state")
+        self.assertEqual(resp.json()["count"], 2)
+
+    def test_yoy_fields(self):
+        resp = self.client.get("/api/aggregates/yoy/?state_fips=06")
+        r = resp.json()["results"][0]
+        self.assertIn("change_abs", r)
+        self.assertIn("change_pct", r)
+        self.assertIn("prev_value", r)
+        self.assertIn("value", r)
+
+    def test_yoy_invalid_metric_returns_400(self):
+        resp = self.client.get("/api/aggregates/yoy/?metric=invalid")
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn("metric", resp.json())
+
+    def test_yoy_invalid_geo_type_returns_400(self):
+        resp = self.client.get("/api/aggregates/yoy/?geo_type=bad")
+        self.assertEqual(resp.status_code, 400)
+
+
+class DashboardTest(TestCase):
+    @classmethod
+    def setUpClass(cls):
+        with connection.schema_editor() as editor:
+            editor.create_model(GeoEntity)
+            editor.create_model(AggNationalSummary)
+            editor.create_model(AggStateSummary)
+            editor.create_model(AggYoY)
+        super().setUpClass()
+
+    @classmethod
+    def tearDownClass(cls):
+        super().tearDownClass()
+        with connection.schema_editor() as editor:
+            editor.delete_model(AggYoY)
+            editor.delete_model(AggStateSummary)
+            editor.delete_model(AggNationalSummary)
+            editor.delete_model(GeoEntity)
+
+    @classmethod
+    def setUpTestData(cls):
+        GeoEntity.objects.create(fips="06", geo_type="state", name="California", state_fips="06")
+        AggNationalSummary.objects.create(year=2022, total_population=332000000, avg_median_income=67000)
+        AggStateSummary.objects.create(state_fips="06", year=2022, avg_median_income=80000)
+        AggYoY.objects.create(fips="06", state_fips="06", geo_type="state", year=2022,
+                              metric="median_income", value=80000, prev_value=76000,
+                              change_abs=4000, change_pct="5.26")
+
+    def test_dashboard_returns_200(self):
+        resp = self.client.get("/dashboard/")
+        self.assertEqual(resp.status_code, 200)
+
+    def test_dashboard_embeds_national_json(self):
+        resp = self.client.get("/dashboard/")
+        self.assertIn(b'"year": 2022', resp.content)
+
+    def test_dashboard_embeds_state_names(self):
+        resp = self.client.get("/dashboard/")
+        self.assertIn(b"California", resp.content)
+
+    def test_dashboard_embeds_metric_labels(self):
+        resp = self.client.get("/dashboard/")
+        self.assertIn(b"median_income", resp.content)
+
+    def test_dashboard_has_chart_canvases(self):
+        resp = self.client.get("/dashboard/")
+        self.assertIn(b"nationalChart", resp.content)
+        self.assertIn(b"stateChart", resp.content)
+        self.assertIn(b"yoyChart", resp.content)
+
+    def test_dashboard_has_metric_select(self):
+        resp = self.client.get("/dashboard/")
+        self.assertIn(b"metricSelect", resp.content)
+
+    def test_dashboard_has_year_select(self):
+        resp = self.client.get("/dashboard/")
+        self.assertIn(b"yearSelect", resp.content)
