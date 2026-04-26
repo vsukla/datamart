@@ -296,6 +296,35 @@ DJANGO_ALLOWED_HOSTS=localhost,127.0.0.1
 
 ---
 
+## Schema Migrations
+
+Schema changes are managed with numbered SQL files in [`migrations/`](migrations/).
+
+```
+migrations/
+  000_schema_version.sql   # bootstraps the schema_migrations tracking table
+  001_initial_schema.sql   # geo_entities + census_acs5
+  migrate.sh               # runner: applies all pending migrations in order
+```
+
+### Running migrations
+
+```bash
+# Load env vars first
+export $(grep -v '^#' config/.env | xargs)
+./migrations/migrate.sh
+```
+
+### Adding a new migration
+
+1. Create `migrations/NNN_description.sql` (next sequential number)
+2. Wrap changes in `BEGIN; ... COMMIT;`
+3. End the file with an `INSERT INTO schema_migrations` statement
+
+The runner checks `schema_migrations` before applying each file and skips already-applied versions, making it safe to re-run.
+
+---
+
 ## Roadmap
 
 ### Near-term

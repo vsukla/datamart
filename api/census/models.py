@@ -2,8 +2,10 @@ from django.db import models
 
 
 class GeoEntity(models.Model):
+    GEO_TYPE_CHOICES = [("state", "State"), ("county", "County")]
+
     fips = models.CharField(max_length=5, primary_key=True)
-    geo_type = models.CharField(max_length=10)
+    geo_type = models.CharField(max_length=10, choices=GEO_TYPE_CHOICES)
     name = models.CharField(max_length=200)
     state_fips = models.CharField(max_length=2)
 

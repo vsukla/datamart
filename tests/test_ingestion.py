@@ -1,6 +1,6 @@
 import pytest
-from unittest.mock import patch, MagicMock
-from census_acs5 import _int, _pct, normalize_state, normalize_county, _fetch
+from unittest.mock import patch, MagicMock, call
+from census_acs5 import _int, _pct, normalize_state, normalize_county, _fetch, load
 
 SAMPLE_STATE = {
     "NAME": "California",
@@ -163,3 +163,54 @@ class TestFetch:
         with patch("census_acs5.requests.get", return_value=self._mock_resp(json_data=json_data)):
             result = _fetch(2022, "state:*")
         assert len(result) == 1
+
+    def test_retries_on_transient_error(self):
+        good_resp = self._mock_resp(json_data=[["NAME", "state"], ["California", "06"]])
+        with patch("census_acs5.requests.get", side_effect=[Exception("timeout"), good_resp]):
+            with patch("census_acs5.time.sleep"):
+                result = _fetch(2022, "state:*")
+        assert len(result) == 1
+
+    def test_raises_after_max_retries(self):
+        with patch("census_acs5.requests.get", side_effect=Exception("timeout")):
+            with patch("census_acs5.time.sleep"):
+                with pytest.raises(Exception, match="timeout"):
+                    _fetch(2022, "state:*")
+
+
+class TestLoad:
+    GEOS = [{"fips": "06", "geo_type": "state", "name": "California", "state_fips": "06"}]
+    ESTIMATES = [{"fips": "06", "year": 2022, "population": 39356104, "median_income": 91905,
+                  "pct_bachelors": 22.11, "median_home_value": 659300,
+                  "pct_owner_occupied": 55.63, "pct_poverty": 12.12, "unemployment_rate": 6.36}]
+
+    def _run_load(self):
+        mock_conn = MagicMock()
+        mock_cur = MagicMock()
+        mock_conn.__enter__ = MagicMock(return_value=mock_conn)
+        mock_conn.__exit__ = MagicMock(return_value=False)
+        mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cur)
+        mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+        with patch("census_acs5.psycopg2.connect", return_value=mock_conn):
+            with patch("census_acs5.psycopg2.extras.execute_batch") as mock_batch:
+                load(self.GEOS, self.ESTIMATES)
+                return mock_batch
+
+    def test_geo_entities_upserted_before_estimates(self):
+        mock_batch = self._run_load()
+        first_sql = mock_batch.call_args_list[0][0][1]
+        assert "geo_entities" in first_sql
+
+    def test_census_acs5_upserted_second(self):
+        mock_batch = self._run_load()
+        second_sql = mock_batch.call_args_list[1][0][1]
+        assert "census_acs5" in second_sql
+
+    def test_execute_batch_called_twice(self):
+        mock_batch = self._run_load()
+        assert mock_batch.call_count == 2
+
+    def test_page_size_500(self):
+        mock_batch = self._run_load()
+        for c in mock_batch.call_args_list:
+            assert c[1]["page_size"] == 500

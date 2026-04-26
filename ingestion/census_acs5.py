@@ -14,9 +14,16 @@ Variables pulled (B-series detailed tables):
   B17001_001E - poverty universe (poverty denominator)
   B23025_005E - unemployed persons in labor force
   B23025_002E - total in labor force (employment denominator)
+
+Usage:
+  python census_acs5.py                    # fetch default years (2018–2022)
+  python census_acs5.py --years 2021 2022  # fetch specific years
 """
 
+import argparse
+import logging
 import os
+import time
 import requests
 import psycopg2
 import psycopg2.extras
@@ -24,10 +31,19 @@ from dotenv import load_dotenv
 
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "../config/.env"))
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(message)s",
+    datefmt="%Y-%m-%dT%H:%M:%S",
+)
+log = logging.getLogger(__name__)
+
 CENSUS_API_KEY = os.environ["CENSUS_API_KEY"]
 CENSUS_BASE_URL = "https://api.census.gov/data"
-YEARS = list(range(2018, 2023))  # ACS5 available: 2018–2022
+DEFAULT_YEARS = list(range(2018, 2023))  # ACS5 available: 2018–2022
 SENTINEL = "-666666666"  # Census placeholder for missing/suppressed values
+MAX_RETRIES = 3
+RETRY_BACKOFF = 2  # seconds; doubled on each retry
 
 VARIABLES = [
     "NAME",
@@ -52,16 +68,29 @@ def _fetch(year: int, geo_for: str) -> list[dict]:
         "for": geo_for,
         "key": CENSUS_API_KEY,
     }
-    resp = requests.get(url, params=params, timeout=60, allow_redirects=False)
-    if resp.status_code in (301, 302) or resp.headers.get("X-DataWebAPI-KeyError"):
-        raise RuntimeError(
-            "Census API key invalid or not yet activated. "
-            "Check your email for a confirmation link."
-        )
-    resp.raise_for_status()
-    rows = resp.json()
-    headers = rows[0]
-    return [dict(zip(headers, row)) for row in rows[1:]]
+    delay = RETRY_BACKOFF
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            resp = requests.get(url, params=params, timeout=60, allow_redirects=False)
+            if resp.status_code in (301, 302) or resp.headers.get("X-DataWebAPI-KeyError"):
+                raise RuntimeError(
+                    "Census API key invalid or not yet activated. "
+                    "Check your email for a confirmation link."
+                )
+            resp.raise_for_status()
+            rows = resp.json()
+            headers = rows[0]
+            return [dict(zip(headers, row)) for row in rows[1:]]
+        except RuntimeError:
+            raise  # key errors are permanent, don't retry
+        except Exception as exc:
+            if attempt == MAX_RETRIES:
+                log.error("Failed to fetch year=%s geo=%s after %d attempts: %s", year, geo_for, MAX_RETRIES, exc)
+                raise
+            log.warning("Attempt %d/%d failed for year=%s geo=%s: %s — retrying in %ds",
+                        attempt, MAX_RETRIES, year, geo_for, exc, delay)
+            time.sleep(delay)
+            delay *= 2
 
 
 def _int(val) -> int | None:
@@ -69,6 +98,8 @@ def _int(val) -> int | None:
         return None
     try:
         v = int(val)
+        # Census uses several negative codes (e.g. -666666666, -999999999) to
+        # indicate suppressed or unavailable data — treat all negatives as NULL.
         return None if v < 0 else v
     except (ValueError, TypeError):
         return None
@@ -161,17 +192,28 @@ def load(geos: list[dict], estimates: list[dict]) -> None:
                     estimates,
                     page_size=500,
                 )
-        print(f"Loaded {len(geos)} geographies, {len(estimates)} estimates.")
+        log.info("Loaded %d geographies, %d estimates.", len(geos), len(estimates))
     finally:
         conn.close()
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Ingest Census ACS5 data into PostgreSQL.")
+    parser.add_argument(
+        "--years",
+        nargs="+",
+        type=int,
+        default=DEFAULT_YEARS,
+        metavar="YEAR",
+        help=f"Years to fetch (default: {DEFAULT_YEARS[0]}–{DEFAULT_YEARS[-1]})",
+    )
+    args = parser.parse_args()
+
     all_geos: dict[str, dict] = {}
     all_estimates: list[dict] = []
 
-    for year in YEARS:
-        print(f"Fetching {year}...")
+    for year in args.years:
+        log.info("Fetching %d...", year)
         state_rows = _fetch(year, "state:*")
         county_rows = _fetch(year, "county:*")
 
@@ -185,8 +227,8 @@ if __name__ == "__main__":
             all_geos[geo["fips"]] = geo
             all_estimates.append(est)
 
-        print(f"  {year}: {len(state_rows)} states, {len(county_rows)} counties")
+        log.info("  %d: %d states, %d counties", year, len(state_rows), len(county_rows))
 
-    print(f"Loading {len(all_geos)} unique geographies, {len(all_estimates)} total estimates...")
+    log.info("Loading %d unique geographies, %d total estimates...", len(all_geos), len(all_estimates))
     load(list(all_geos.values()), all_estimates)
-    print("Done.")
+    log.info("Done.")
