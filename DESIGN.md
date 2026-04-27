@@ -431,7 +431,21 @@ BLS_API_KEY=...            # BLS registered key (increases batch size 50 → 500
 
 ---
 
-## Schema Migrations
+## Schema
+
+### Fresh install
+
+Use `schema/schema.sql` to set up a brand-new database in one shot:
+
+```bash
+psql "$DB_URL" -f schema/schema.sql
+```
+
+This creates all tables and the `county_profile` view, and pre-populates `schema_migrations` so the migration runner knows they've been applied.
+
+### Incremental migrations
+
+For an existing database, `migrations/migrate.sh` applies only the pending numbered SQL files:
 
 ```
 migrations/
@@ -449,6 +463,12 @@ migrations/
 export $(grep -v '^#' config/.env | xargs)
 ./migrations/migrate.sh
 ```
+
+### Adding a new migration
+
+1. Add the DDL to `migrations/NNN_description.sql`, wrapped in `BEGIN; ... COMMIT;`, ending with an `INSERT INTO schema_migrations` statement
+2. Apply the same change to `schema/schema.sql` so it stays current
+3. Run `./migrations/migrate.sh` against the target database
 
 ---
 
