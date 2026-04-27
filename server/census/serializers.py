@@ -1,5 +1,8 @@
 from rest_framework import serializers
-from .models import GeoEntity, CensusAcs5, AggNationalSummary, AggStateSummary, AggRanking, AggYoY
+from .models import (
+    GeoEntity, CensusAcs5, AggNationalSummary, AggStateSummary, AggRanking, AggYoY,
+    CdcPlaces, BlsLaus, UsdaFoodEnv, CountyProfile,
+)
 
 
 class EstimateSerializer(serializers.ModelSerializer):
@@ -94,4 +97,52 @@ class EstimateWithGeoSerializer(serializers.ModelSerializer):
             "pct_poverty",
             "unemployment_rate",
             "fetched_at",
+        ]
+
+
+class CdcPlacesSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CdcPlaces
+        fields = [
+            "fips", "year",
+            "pct_obesity", "pct_diabetes", "pct_smoking", "pct_hypertension",
+            "pct_depression", "pct_no_lpa", "pct_poor_mental_health",
+            "fetched_at",
+        ]
+
+
+class BlsLausSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = BlsLaus
+        fields = [
+            "fips", "year",
+            "labor_force", "employed", "unemployed", "unemployment_rate",
+            "fetched_at",
+        ]
+
+
+class UsdaFoodEnvSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = UsdaFoodEnv
+        fields = [
+            "fips", "data_year",
+            "pct_low_food_access", "groceries_per_1000", "fast_food_per_1000",
+            "pct_snap", "farmers_markets",
+            "fetched_at",
+        ]
+
+
+class CountyProfileSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CountyProfile
+        fields = [
+            "fips", "county_name", "state_fips",
+            "census_year", "population", "median_income", "pct_bachelors",
+            "median_home_value", "pct_owner_occupied", "pct_poverty",
+            "census_unemployment_rate",
+            "places_year", "pct_obesity", "pct_diabetes", "pct_smoking",
+            "pct_hypertension", "pct_depression", "pct_no_lpa", "pct_poor_mental_health",
+            "bls_year", "labor_force", "employed", "unemployed", "bls_unemployment_rate",
+            "usda_year", "pct_low_food_access", "groceries_per_1000", "fast_food_per_1000",
+            "pct_snap", "farmers_markets",
         ]

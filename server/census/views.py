@@ -1,11 +1,15 @@
 from django.db.models import Prefetch
 from rest_framework import generics
 from rest_framework.exceptions import ValidationError
-from .models import GeoEntity, CensusAcs5, AggNationalSummary, AggStateSummary, AggRanking, AggYoY
+from .models import (
+    GeoEntity, CensusAcs5, AggNationalSummary, AggStateSummary, AggRanking, AggYoY,
+    CdcPlaces, BlsLaus, UsdaFoodEnv, CountyProfile,
+)
 from .serializers import (
     GeoListSerializer, GeoDetailSerializer, EstimateWithGeoSerializer,
     AggNationalSummarySerializer, AggStateSummarySerializer,
     AggRankingSerializer, AggYoYSerializer,
+    CdcPlacesSerializer, BlsLausSerializer, UsdaFoodEnvSerializer, CountyProfileSerializer,
 )
 
 VALID_GEO_TYPES = {"state", "county"}
@@ -157,4 +161,73 @@ class AggYoYView(generics.ListAPIView):
             qs = qs.filter(year=year)
         if metric:
             qs = qs.filter(metric=metric)
+        return qs
+
+
+class CdcPlacesView(generics.ListAPIView):
+    """GET /api/health/  — optional ?fips, ?state_fips, ?year"""
+    serializer_class = CdcPlacesSerializer
+
+    def get_queryset(self):
+        qs = CdcPlaces.objects.all()
+        fips = self.request.query_params.get("fips")
+        state_fips = self.request.query_params.get("state_fips")
+        year = _validate_year(self.request.query_params.get("year"))
+        if fips:
+            qs = qs.filter(fips=fips)
+        if state_fips:
+            qs = qs.filter(fips__startswith=state_fips)
+        if year is not None:
+            qs = qs.filter(year=year)
+        return qs
+
+
+class BlsLausView(generics.ListAPIView):
+    """GET /api/labor/  — optional ?fips, ?state_fips, ?year"""
+    serializer_class = BlsLausSerializer
+
+    def get_queryset(self):
+        qs = BlsLaus.objects.all()
+        fips = self.request.query_params.get("fips")
+        state_fips = self.request.query_params.get("state_fips")
+        year = _validate_year(self.request.query_params.get("year"))
+        if fips:
+            qs = qs.filter(fips=fips)
+        if state_fips:
+            qs = qs.filter(fips__startswith=state_fips)
+        if year is not None:
+            qs = qs.filter(year=year)
+        return qs
+
+
+class UsdaFoodEnvView(generics.ListAPIView):
+    """GET /api/food/  — optional ?fips, ?state_fips, ?data_year"""
+    serializer_class = UsdaFoodEnvSerializer
+
+    def get_queryset(self):
+        qs = UsdaFoodEnv.objects.all()
+        fips = self.request.query_params.get("fips")
+        state_fips = self.request.query_params.get("state_fips")
+        data_year = _validate_year(self.request.query_params.get("data_year"))
+        if fips:
+            qs = qs.filter(fips=fips)
+        if state_fips:
+            qs = qs.filter(fips__startswith=state_fips)
+        if data_year is not None:
+            qs = qs.filter(data_year=data_year)
+        return qs
+
+
+class CountyProfileView(generics.ListAPIView):
+    """GET /api/profile/  — optional ?fips, ?state_fips"""
+    serializer_class = CountyProfileSerializer
+
+    def get_queryset(self):
+        qs = CountyProfile.objects.all()
+        fips = self.request.query_params.get("fips")
+        state_fips = self.request.query_params.get("state_fips")
+        if fips:
+            qs = qs.filter(fips=fips)
+        if state_fips:
+            qs = qs.filter(state_fips=state_fips)
         return qs

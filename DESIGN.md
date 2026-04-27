@@ -2,7 +2,7 @@
 
 ## Overview
 
-Datamart is a Data-as-a-Service platform that consolidates publicly available datasets into normalized, queryable PostgreSQL tables and exposes them through a REST API and an interactive web dashboard. The initial focus is U.S. Census Bureau data, with a roadmap to add World Bank, WHO, and other government sources.
+Datamart is a Data-as-a-Service platform that consolidates publicly available datasets into normalized, queryable PostgreSQL tables and exposes them through a REST API and an interactive web dashboard. The initial focus is U.S. Census Bureau data at state and county level, extended with county-level health, labor, and food environment data from CDC PLACES, BLS LAUS, and the USDA Food Environment Atlas.
 
 The platform has two layers:
 
@@ -15,21 +15,27 @@ The platform has two layers:
 flowchart LR
     subgraph sources ["Data Sources"]
         S1([Census Bureau])
-        S2([World Bank])
-        S3([WHO / data.gov])
+        S2([CDC PLACES])
+        S3([BLS LAUS])
+        S4([USDA Food Env])
     end
 
     subgraph pipeline ["Ingestion Pipeline"]
         I1[census_acs5.py]
         I2[compute_aggregates.py\ndaily batch]
-        I3[future scripts...]
+        I3[ingest_cdc_places.py]
+        I4[ingest_bls_laus.py]
+        I5[ingest_usda_food_env.py]
     end
 
     subgraph store ["PostgreSQL — datamart"]
         G[(geo_entities)]
         E[(census_acs5)]
         A[(agg_* tables)]
-        F[(future tables...)]
+        P[(cdc_places)]
+        B[(bls_laus)]
+        U[(usda_food_env)]
+        CV[(county_profile VIEW)]
     end
 
     subgraph server ["Django — server/"]
@@ -37,23 +43,35 @@ flowchart LR
         V2["GET /api/geo/:fips/"]
         V3["GET /api/estimates/"]
         V4["GET /api/aggregates/..."]
-        V5["GET /dashboard/"]
+        V5["GET /api/health/"]
+        V6["GET /api/labor/"]
+        V7["GET /api/food/"]
+        V8["GET /api/profile/"]
+        V9["GET /dashboard/"]
     end
 
     C([API Consumers])
     D([Browser])
 
-    S1 --> I1
-    S2 & S3 --> I3
+    S1 --> I1 & I2
+    S2 --> I3
+    S3 --> I4
+    S4 --> I5
     I1 --> G & E
-    E --> I2
     I2 --> A
-    I3 --> F
+    I3 --> P
+    I4 --> B
+    I5 --> U
+    G & E & A & P & B & U --> CV
     G & E --> V1 & V2 & V3
-    A --> V4 & V5
-    G --> V5
-    V1 & V2 & V3 & V4 --> C
-    V5 --> D
+    A --> V4 & V9
+    P --> V5
+    B --> V6
+    U --> V7
+    CV --> V8
+    G --> V9
+    V1 & V2 & V3 & V4 & V5 & V6 & V7 & V8 --> C
+    V9 --> D
 ```
 
 ---
@@ -63,30 +81,38 @@ flowchart LR
 ```
 datamart/
 ├── config/
-│   ├── .env                  # DB credentials and API keys (not committed)
+│   ├── .env                      # DB credentials and API keys (not committed)
 │   └── .env.example
 ├── ingestion/
-│   ├── census_acs5.py        # Census ACS5 fetch → normalize → load
-│   └── compute_aggregates.py # Daily batch: recompute all agg_* tables
+│   ├── census_acs5.py            # Census ACS5 fetch → normalize → load
+│   ├── compute_aggregates.py     # Daily batch: recompute all agg_* tables
+│   ├── ingest_cdc_places.py      # CDC PLACES health outcomes (Socrata API)
+│   ├── ingest_bls_laus.py        # BLS Local Area Unemployment Statistics
+│   └── ingest_usda_food_env.py   # USDA Food Environment Atlas (Excel file)
 ├── schema/
-│   └── census.sql            # DDL for geo_entities and census_acs5 tables
+│   └── census.sql                # DDL for geo_entities and census_acs5 tables
 ├── migrations/
 │   ├── 000_schema_version.sql
 │   ├── 001_initial_schema.sql
 │   ├── 002_aggregate_tables.sql
+│   ├── 003_cdc_places.sql
+│   ├── 004_bls_laus.sql
+│   ├── 005_usda_food_env.sql
+│   ├── 006_county_profile_view.sql
 │   └── migrate.sh
 ├── server/
 │   ├── manage.py
 │   ├── requirements.txt
-│   ├── datamart_api/         # Django project settings, urls, wsgi
-│   ├── census/               # Django app: REST API (models, serializers, views, urls)
-│   └── dashboard/            # Django app: web dashboard
+│   ├── datamart_api/             # Django project settings, urls, wsgi
+│   ├── census/                   # Django app: REST API (models, serializers, views, urls)
+│   └── dashboard/                # Django app: web dashboard
 │       └── templates/dashboard/index.html
 ├── tests/
-│   ├── test_ingestion.py     # Unit tests for ingestion helpers
-│   ├── test_api.py           # Django integration tests for all API endpoints + dashboard
-│   └── test_aggregates.py    # Unit tests for compute_aggregates SQL builders
-├── conftest.py               # pytest path setup
+│   ├── test_ingestion.py         # Unit tests for Census ingestion helpers
+│   ├── test_api.py               # Django integration tests for all API endpoints + dashboard
+│   ├── test_aggregates.py        # Unit tests for compute_aggregates SQL builders
+│   └── test_external_ingestion.py # Unit tests for CDC, BLS, USDA ingestion scripts
+├── conftest.py                   # pytest path setup
 └── pytest.ini
 ```
 
@@ -94,7 +120,7 @@ datamart/
 
 ## Data Model
 
-Core tables live in [`schema/census.sql`](schema/census.sql). Aggregate tables are created by [`migrations/002_aggregate_tables.sql`](migrations/002_aggregate_tables.sql).
+Core tables live in [`schema/census.sql`](schema/census.sql). Aggregate tables are created by [`migrations/002_aggregate_tables.sql`](migrations/002_aggregate_tables.sql). External-source tables are in migrations 003–005; the cross-source view is in 006.
 
 ### `geo_entities`
 
@@ -124,34 +150,21 @@ One row per geography × year. All percentage fields are pre-computed ratios (no
 | `unemployment_rate`  | NUMERIC(5,2) | B23025_005E / B23025_002E × 100         |
 | `fetched_at`         | TIMESTAMPTZ  | Set to `NOW()` on insert/update         |
 
-The unique constraint on `(fips, year)` enables idempotent upserts.
-
 **Current data volume:** 3,283 geographies (52 state-equivalents + 3,231 counties), 5 vintages (2018–2022), ~16,400 estimate rows.
 
 ### Aggregate Tables
 
-Pre-computed and fully rewritten on each daily batch run. All four tables have a `computed_at TIMESTAMPTZ` column set at insert time.
+Pre-computed and fully rewritten on each daily batch run. All four tables have a `computed_at TIMESTAMPTZ` column.
 
 #### `agg_national_summary`
 
-Population-weighted national averages per year, derived from state-level data.
-
-| Column                | Type          |
-|-----------------------|---------------|
-| `year`                | SMALLINT UNIQUE|
-| `total_population`    | BIGINT        |
-| `avg_median_income`   | NUMERIC(10,0) |
-| `avg_pct_bachelors`   | NUMERIC(5,2)  |
-| `avg_median_home_value`| NUMERIC(10,0)|
-| `avg_pct_owner_occupied`| NUMERIC(5,2)|
-| `avg_pct_poverty`     | NUMERIC(5,2)  |
-| `avg_unemployment_rate`| NUMERIC(5,2) |
+Population-weighted national averages per year, derived from state-level data. Unique on `year`.
 
 #### `agg_state_summary`
 
 Population-weighted county rollups per state per year. Unique on `(state_fips, year)`.
 
-Same avg columns as `agg_national_summary`, plus `state_fips CHAR(2)`.
+Both tables share the same avg columns: `avg_median_income`, `avg_pct_bachelors`, `avg_median_home_value`, `avg_pct_owner_occupied`, `avg_pct_poverty`, `avg_unemployment_rate`.
 
 #### `agg_rankings`
 
@@ -175,82 +188,111 @@ Year-over-year absolute and percentage change per geography × metric. Unique on
 
 | Column      | Type          | Notes                    |
 |-------------|---------------|--------------------------|
-| `fips`      | VARCHAR(5)    |                          |
-| `state_fips`| CHAR(2)       |                          |
-| `geo_type`  | VARCHAR(10)   |                          |
 | `year`      | SMALLINT      | The "current" year       |
-| `metric`    | VARCHAR(30)   |                          |
 | `value`     | NUMERIC(12,2) | Current year value       |
 | `prev_value`| NUMERIC(12,2) | Prior year value         |
 | `change_abs`| NUMERIC(12,2) | `value - prev_value`     |
 | `change_pct`| NUMERIC(7,2)  | % change from prior year |
 
+### External-Source Tables
+
+#### `cdc_places`
+
+County-level health outcome estimates from CDC PLACES (crude prevalence %). One row per county × year. Unique on `(fips, year)`.
+
+| Column                 | Type         | CDC measure ID |
+|------------------------|--------------|----------------|
+| `pct_obesity`          | NUMERIC(5,1) | OBESITY        |
+| `pct_diabetes`         | NUMERIC(5,1) | DIABETES       |
+| `pct_smoking`          | NUMERIC(5,1) | CSMOKING       |
+| `pct_hypertension`     | NUMERIC(5,1) | BPHIGH         |
+| `pct_depression`       | NUMERIC(5,1) | DEPRESSION     |
+| `pct_no_lpa`           | NUMERIC(5,1) | LPA (no leisure-time physical activity) |
+| `pct_poor_mental_health` | NUMERIC(5,1) | MHLTH        |
+
+Source: Socrata API at `https://chronicdata.cdc.gov/resource/i46a-9kgh.json`
+
+#### `bls_laus`
+
+Annual average unemployment and labor force estimates from BLS Local Area Unemployment Statistics. One row per county × year. Unique on `(fips, year)`.
+
+| Column             | Type         | BLS series type |
+|--------------------|--------------|-----------------|
+| `labor_force`      | INTEGER      | 006             |
+| `employed`         | INTEGER      | 005             |
+| `unemployed`       | INTEGER      | 004             |
+| `unemployment_rate`| NUMERIC(5,1) | 003             |
+
+Series ID format: `LAUCN{5-digit-fips}0000000{3-digit-type}` (20 chars). Counties are fetched in batches of 50 series per request (BLS unregistered limit; 500 with a registered API key).
+
+#### `usda_food_env`
+
+County-level food environment metrics from the USDA Food Environment Atlas Excel file. One row per county × data vintage. Unique on `(fips, data_year)`.
+
+| Column               | Type         | Atlas sheet   | Source column    |
+|----------------------|--------------|---------------|------------------|
+| `pct_low_food_access`| NUMERIC(5,1) | ACCESS        | PCT_LACCESS_POP15|
+| `groceries_per_1000` | NUMERIC(6,2) | STORES        | GROCPTH16        |
+| `fast_food_per_1000` | NUMERIC(6,2) | RESTAURANTS   | FSRPTH16         |
+| `pct_snap`           | NUMERIC(5,1) | ASSISTANCE    | PCT_SNAP17       |
+| `farmers_markets`    | INTEGER      | LOCAL         | FMRKT18          |
+
+Download from USDA ERS. Run with `--file /path/to/FoodEnvironmentAtlas.xls` or `--download`.
+
+### `county_profile` View
+
+A cross-source read-only view joining all four data sources at county level. Each row is one county with the most recent available data from each source (via `LATERAL` subqueries ordered by year DESC). Exposed at `/api/profile/`.
+
 ---
 
 ## Ingestion Pipeline
 
+### Census ACS5
+
 Source: [ingestion/census_acs5.py](ingestion/census_acs5.py)
 
-The Census Bureau exposes ACS5 data via a JSON REST API at `https://api.census.gov/data/{year}/acs/acs5`. Each request fetches up to 50 variables for a given geography level.
+Fetches ACS5 data from `https://api.census.gov/data/{year}/acs/acs5`. Normalizes fields, handles sentinel values (`-666666666` → NULL), upserts into `geo_entities` and `census_acs5`. Single transaction per run.
 
-### Flow
-
-```mermaid
-flowchart TD
-    A([Census Bureau API\napi.census.gov]) -->|HTTP GET per year × geo level| B
-
-    subgraph ingestion ["ingestion/census_acs5.py"]
-        B["_fetch(year, geo_for)\nreturns list of raw dicts"]
-        B --> C{"geo level?"}
-        C -->|state| D[normalize_state]
-        C -->|county| E[normalize_county]
-        D & E --> F["_int() — sentinel / negative → NULL\n_pct() — ratio with null-safe denominator"]
-        F --> G["load(geos, estimates)\nexecute_batch, page_size=500"]
-    end
-
-    subgraph db ["PostgreSQL — datamart"]
-        H[(geo_entities\nstate + county FIPS)]
-        I[(census_acs5\nestimates × year)]
-        H --> I
-    end
-
-    G -->|"upsert geo_entities first (FK target)"| H
-    G -->|"upsert census_acs5 second"| I
-```
-
-### Key design decisions
-
-- **Sentinel handling** — The Census API returns `"-666666666"` for suppressed or unavailable values. `_int()` converts these (and any other negative) to `NULL` rather than storing a misleading integer.
-- **Pre-computed percentages** — Raw counts are fetched but only the derived percentage is stored. This keeps the schema stable if denominators change across vintages.
-- **Single transaction per run** — All geo upserts and estimate upserts for the entire run commit together or not at all.
-- **Idempotent upserts** — `ON CONFLICT ... DO UPDATE` means the script can be re-run without duplicating data.
-
----
-
-## Aggregate Batch Job
+### Aggregate Batch
 
 Source: [ingestion/compute_aggregates.py](ingestion/compute_aggregates.py)
 
-Designed to run as a daily cron job. Truncates all four `agg_*` tables and fully recomputes them in a single transaction. Because it's a full recompute rather than an incremental upsert, the logic stays simple and results are always consistent.
+Truncates and fully recomputes all four `agg_*` tables in a single transaction. Population-weighted averages use `SUM(metric::numeric * population) / SUM(population) FILTER (WHERE metric IS NOT NULL)` to handle nulls without skewing denominators.
 
 ```bash
 python ingestion/compute_aggregates.py
 ```
 
-### Computation steps (in order)
+### CDC PLACES
 
-1. `TRUNCATE agg_national_summary, agg_state_summary, agg_rankings, agg_yoy RESTART IDENTITY`
-2. **National summary** — `SUM(metric::numeric * population) / SUM(population)` grouped by year, from state-level rows only
-3. **State summary** — same weighted-average pattern grouped by `(state_fips, year)`, from county-level rows
-4. **Rankings** — `RANK()` and `PERCENT_RANK()` window functions over a UNION ALL pivot of all six metrics
-5. **YoY** — self-join on the same pivot: `prev.year = curr.year - 1`
+Source: [ingestion/ingest_cdc_places.py](ingestion/ingest_cdc_places.py)
 
-### Key design decisions
+Fetches county-level health prevalence estimates from the CDC Socrata API (paginated, `$limit=50000` per page). Pivots raw measure rows into one row per county × year. Upserts into `cdc_places`.
 
-- **Population-weighted averages** — Uses `SUM(metric * population) / SUM(population) FILTER (WHERE metric IS NOT NULL)` so geographies with missing values don't skew the denominator.
-- **Cast before multiply** — Metric columns are cast to `numeric` before multiplication to avoid integer overflow on large states (`median_income * population` exceeds `INTEGER` range).
-- **`PERCENT_RANK()` cast** — PostgreSQL's two-argument `ROUND` requires `numeric`; `PERCENT_RANK()` returns `double precision` and must be cast explicitly.
-- **`state_fips` denormalized** — Stored directly in `agg_rankings` and `agg_yoy` to allow state-level filtering without a join.
+```bash
+python ingestion/ingest_cdc_places.py [--year 2022] [--app-token TOKEN]
+```
+
+### BLS LAUS
+
+Source: [ingestion/ingest_bls_laus.py](ingestion/ingest_bls_laus.py)
+
+Constructs BLS LAUS series IDs for all ~3,100 counties (4 series each: unemployment rate, unemployed, employed, labor force). Fetches in batches of 50 (or 500 with a registered API key) from the BLS Public Data API v2. Extracts annual average period (`M13`). Upserts into `bls_laus`.
+
+```bash
+python ingestion/ingest_bls_laus.py [--start 2018] [--end 2022] [--api-key KEY]
+```
+
+### USDA Food Environment Atlas
+
+Source: [ingestion/ingest_usda_food_env.py](ingestion/ingest_usda_food_env.py)
+
+Reads the USDA ERS Excel workbook (multiple sheets) using `openpyxl`. Merges columns from ACCESS, STORES, RESTAURANTS, ASSISTANCE, and LOCAL sheets by county FIPS. Upserts into `usda_food_env`.
+
+```bash
+python ingestion/ingest_usda_food_env.py --file /path/to/FoodEnvironmentAtlas.xls [--data-year 2018]
+python ingestion/ingest_usda_food_env.py --download [--data-year 2018]
+```
 
 ---
 
@@ -258,71 +300,50 @@ python ingestion/compute_aggregates.py
 
 Source: [`server/census/`](server/census/)
 
-Built with Django 6 and Django REST Framework. Models use `managed = False` — Django reads and writes to the tables but does not manage their lifecycle.
-
-All list endpoints use `PageNumberPagination` with `PAGE_SIZE = 50`. Navigate with `?page=N`.
+Built with Django 6 and Django REST Framework. Models use `managed = False`. All list endpoints support `?page_size=N` (max 400) via `FlexiblePageNumberPagination` (default 50).
 
 ### Core endpoints
 
 #### `GET /api/geo/`
-
-Paginated list of geographic entities.
-
-| Param       | Description                      |
-|-------------|----------------------------------|
-| `geo_type`  | Filter by `state` or `county`    |
-| `state_fips`| Filter by 2-char state FIPS code |
+Paginated list of geographic entities. Params: `geo_type` (`state`|`county`), `state_fips`.
 
 #### `GET /api/geo/<fips>/`
-
 Single geography with all ACS5 estimates embedded, ordered by year.
 
 #### `GET /api/estimates/`
-
-Flat, paginated list of estimates with geo metadata inlined.
-
-| Param       | Description                      |
-|-------------|----------------------------------|
-| `geo_type`  | Filter by `state` or `county`    |
-| `state_fips`| Filter to a specific state       |
-| `year`      | Filter to a single vintage year  |
+Flat, paginated estimates with geo metadata inlined. Params: `geo_type`, `state_fips`, `year`.
 
 ### Aggregate endpoints
 
 #### `GET /api/aggregates/national/`
-
-| Param | Description              |
-|-------|--------------------------|
-| `year`| Filter to a single year  |
+Params: `year`.
 
 #### `GET /api/aggregates/state-summary/`
-
-| Param       | Description              |
-|-------------|--------------------------|
-| `state_fips`| Filter to one state      |
-| `year`      | Filter to a single year  |
+Params: `state_fips`, `year`.
 
 #### `GET /api/aggregates/rankings/`
-
-| Param       | Description                                    |
-|-------------|------------------------------------------------|
-| `geo_type`  | `state` or `county`                            |
-| `state_fips`| Filter to one state's geographies              |
-| `year`      | Filter to a single year                        |
-| `metric`    | One of the six supported metrics               |
+Params: `geo_type`, `state_fips`, `year`, `metric`.
 
 #### `GET /api/aggregates/yoy/`
+Params: `geo_type`, `state_fips`, `year`, `metric`. Returns `value`, `prev_value`, `change_abs`, `change_pct`.
 
-Same filter params as `/api/aggregates/rankings/`. Returns `value`, `prev_value`, `change_abs`, `change_pct`.
+### External-source endpoints
+
+#### `GET /api/health/`
+CDC PLACES health outcomes. Params: `fips`, `state_fips`, `year`.
+
+#### `GET /api/labor/`
+BLS LAUS annual unemployment. Params: `fips`, `state_fips`, `year`.
+
+#### `GET /api/food/`
+USDA Food Environment metrics. Params: `fips`, `state_fips`, `data_year`.
+
+#### `GET /api/profile/`
+Unified county profile joining all sources (most recent year per source). Params: `fips`, `state_fips`. Backed by the `county_profile` view.
 
 ### Validation
 
 `geo_type`, `year`, and `metric` params are validated on all applicable endpoints; invalid values return HTTP 400 with a descriptive error body.
-
-### Query optimization
-
-- `GeoDetailView` uses `prefetch_related` with an explicit `Prefetch` object to avoid N+1 queries when embedding estimates.
-- `EstimatesListView` uses `select_related("geo")` so geo fields are fetched in a single JOIN.
 
 ---
 
@@ -330,22 +351,23 @@ Same filter params as `/api/aggregates/rankings/`. Returns `value`, `prev_value`
 
 Source: [`server/dashboard/`](server/dashboard/)
 
-A browser-based dashboard served at `/dashboard/`. Built with Django templates, Bootstrap 5, and Chart.js. All aggregate data is serialized to JSON at render time and embedded in the page — no AJAX calls are made after load.
+A browser-based dashboard served at `/dashboard/`. Built with Django templates, Bootstrap 5, and Chart.js.
+
+State-level data is embedded as JSON at render time. County-level data is fetched via AJAX when a state is selected from the drill-down dropdown. County names are cached client-side in `countyNameCache`.
 
 ### Charts
 
 | Chart | Type | Data source |
 |---|---|---|
 | National Trend | Line | `agg_national_summary` |
-| State Ranking | Horizontal bar (all states sorted) | `agg_state_summary` |
-| YoY Movers | Horizontal bar (top 5 + bottom 5) | `agg_yoy` |
+| State/County Ranking | Horizontal bar | `agg_state_summary` / `/api/aggregates/rankings/` |
+| YoY Movers | Horizontal bar (top 5 + bottom 5) | `agg_yoy` / `/api/aggregates/yoy/` |
 
 ### Controls
 
-- **Metric** dropdown — selects one of the six metrics; updates all three charts
-- **Year** dropdown — selects vintage year; updates state ranking and YoY charts
-
-The national trend chart header shows the latest value and the percentage change since 2018. State ranking colors the top 5 blue and bottom 5 red. YoY bars are green for gains and red for losses.
+- **Metric** dropdown — one of six Census metrics
+- **Year** dropdown — vintage year (2018–2022)
+- **Drill into State** dropdown — switches ranking and YoY charts from state-level to county-level for the selected state; fetches data via `Promise.all()` AJAX calls
 
 ---
 
@@ -358,35 +380,33 @@ Run with:
 python -m pytest tests/ -v
 ```
 
-**114 tests total.**
+**173 tests total.**
 
 ### test_ingestion.py — 36 unit tests
 
-Pure Python, no database. Covers:
+Pure Python, no database. Covers Census ACS5 ingestion helpers: `_int()`, `_pct()`, `normalize_state()`, `normalize_county()`, `_fetch()` (mocked HTTP), and `load()` (mocked psycopg2).
 
-- `_int()` — sentinel value, `None`, negatives, invalid strings, zero
-- `_pct()` — valid ratios, rounding, zero/null denominator, sentinel denominator
-- `normalize_state()` — FIPS zero-padding, geo_type, all computed fields, sentinel income
-- `normalize_county()` — 5-char FIPS construction, state_fips extraction
-- `_fetch()` — mocked HTTP: 301 redirect, key error header, valid response, header row stripped, retry on transient error, raises after max retries
-- `load()` — mocked psycopg2: geo upserted before estimates, execute_batch called twice, page_size=500
+### test_api.py — 71 Django integration tests
 
-### test_api.py — 48 Django integration tests
+Uses Django's `TestCase` with a real PostgreSQL test database. All `managed = False` tables are created via `connection.schema_editor()`. Four test classes:
 
-Uses Django's `TestCase` with a real PostgreSQL test database. Because all models are `managed = False`, tables are created manually via `connection.schema_editor()` before Django's `setUpClass` enters its atomic block, then dropped in `tearDownClass`. Three test classes:
-
-- **`GeoAPITest`** — all three core endpoints, every filter param, 404, estimate ordering, pagination, validation (geo_type, year)
-- **`AggregateAPITest`** — all four aggregate endpoints, every filter param, validation (geo_type, year, metric)
-- **`DashboardTest`** — 200 response, embedded JSON data, chart canvas IDs, metric and year selectors present
+- **`GeoAPITest`** — core endpoints, all filter params, 404, estimate ordering, validation
+- **`AggregateAPITest`** — all four aggregate endpoints, filter params, validation
+- **`DashboardTest`** — 200 response, embedded JSON, chart canvas IDs, selectors
+- **`ExternalSourceAPITest`** — `/api/health/`, `/api/labor/`, `/api/food/`: all filter params and field presence
+- **`CountyProfileAPITest`** — `/api/profile/`: filter by fips and state_fips, all source fields present, pagination
 
 ### test_aggregates.py — 30 unit tests
 
-Pure Python, no database. Covers:
+Pure Python. Covers `compute_aggregates.py` SQL builder functions: UNION ALL count, metric literals, window functions, transaction order.
 
-- `_metric_union()` — UNION ALL count, metric literals, numeric cast, state_fips and geo_type presence
-- `_sql_rankings()` — INSERT target, RANK() / PERCENT_RANK() window functions, partition clause, numeric cast
-- `_sql_yoy()` — INSERT target, year-minus-one join, NULLIF guard, change fields
-- `compute()` — mocked connection: TRUNCATE is first, correct INSERT order, exactly 5 execute calls
+### test_external_ingestion.py — 36 unit tests
+
+Pure Python, no database or HTTP. Covers:
+
+- **CDC PLACES** — `pivot()` (measure mapping, FIPS zero-padding, null handling), `fetch_places()` (single page, pagination trigger), `upsert()` (unknown FIPS skipped, commit called), `ingest()` (fetch+upsert integration)
+- **BLS LAUS** — `build_series_id()` format, `parse_fips_from_series()` round-trip, `parse_bls_response()` (annual-only M13, data types), `upsert()` (execute count, commit)
+- **USDA Food Env** — `_safe()` (type coercion, None/NA handling), `load_workbook_data()` (column mapping, FIPS padding, missing sheets, multi-sheet merge), `upsert()` (unknown FIPS skip, commit)
 
 ---
 
@@ -404,37 +424,31 @@ DB_PASSWORD=
 DJANGO_SECRET_KEY=...      # required in production
 DJANGO_DEBUG=true
 DJANGO_ALLOWED_HOSTS=localhost,127.0.0.1
+# Optional
+CDC_APP_TOKEN=...          # Socrata app token (increases rate limits)
+BLS_API_KEY=...            # BLS registered key (increases batch size 50 → 500)
 ```
 
 ---
 
 ## Schema Migrations
 
-Schema changes are managed with numbered SQL files in [`migrations/`](migrations/).
-
 ```
 migrations/
-  000_schema_version.sql   # bootstraps the schema_migrations tracking table
-  001_initial_schema.sql   # geo_entities + census_acs5
-  002_aggregate_tables.sql # agg_national_summary, agg_state_summary, agg_rankings, agg_yoy
-  migrate.sh               # runner: applies all pending migrations in order
+  000_schema_version.sql       # bootstraps schema_migrations tracking table
+  001_initial_schema.sql       # geo_entities + census_acs5
+  002_aggregate_tables.sql     # agg_national_summary, agg_state_summary, agg_rankings, agg_yoy
+  003_cdc_places.sql           # cdc_places table
+  004_bls_laus.sql             # bls_laus table
+  005_usda_food_env.sql        # usda_food_env table
+  006_county_profile_view.sql  # county_profile cross-source view
+  migrate.sh                   # runner: applies pending migrations in order
 ```
 
-### Running migrations
-
 ```bash
-# Load env vars first
 export $(grep -v '^#' config/.env | xargs)
 ./migrations/migrate.sh
 ```
-
-### Adding a new migration
-
-1. Create `migrations/NNN_description.sql` (next sequential number)
-2. Wrap changes in `BEGIN; ... COMMIT;`
-3. End the file with an `INSERT INTO schema_migrations` statement
-
-The runner checks `schema_migrations` before applying each file and skips already-applied versions, making it safe to re-run.
 
 ---
 
@@ -443,14 +457,9 @@ The runner checks `schema_migrations` before applying each file and skips alread
 ### Near-term
 - **Range filters** on `/api/estimates/` — e.g., `pct_poverty__gte=20`, `median_income__lte=50000`
 - **Additional Census variables** — health insurance (B27), commute time (B08), race/ethnicity (B02/B03)
-- **County-level dashboard** — extend dashboard to drill into a state and show county comparisons
-
-### Additional data sources
-- **World Bank** — country-level development indicators (GDP, life expectancy, education)
-- **WHO** — global health metrics
-- **data.gov** — supplementary federal datasets
+- **Schedule ingestion** — GitHub Actions cron for daily `compute_aggregates.py`
 
 ### Platform
-- **Common entity database** — normalized reference tables for countries, organizations, and people to link across datasets
-- **Auth layer** — token-based authentication for rate limiting and enterprise private views
-- **Versioning and archival** — track schema changes and preserve historical snapshots
+- **Token-based auth** — rate limiting and enterprise private views
+- **Dashboard cross-source panel** — show county_profile data in the drill-down view alongside Census charts
+- **World Bank / WHO** — country-level development indicators
