@@ -323,6 +323,8 @@ class DashboardTest(TestCase):
             editor.create_model(AggNationalSummary)
             editor.create_model(AggStateSummary)
             editor.create_model(AggYoY)
+            editor.create_model(CdcPlaces)
+            editor.create_model(UsdaFoodEnv)
         super().setUpClass()
 
     @classmethod
@@ -332,6 +334,8 @@ class DashboardTest(TestCase):
             editor.delete_model(AggYoY)
             editor.delete_model(AggStateSummary)
             editor.delete_model(AggNationalSummary)
+            editor.delete_model(UsdaFoodEnv)
+            editor.delete_model(CdcPlaces)
             editor.delete_model(GeoEntity)
 
     @classmethod
@@ -342,6 +346,13 @@ class DashboardTest(TestCase):
         AggYoY.objects.create(fips="06", state_fips="06", geo_type="state", year=2022,
                               metric="median_income", value=80000, prev_value=76000,
                               change_abs=4000, change_pct="5.26")
+        CdcPlaces.objects.create(fips="06037", year=2022,
+                                 pct_obesity="36.5", pct_diabetes="10.2", pct_smoking="12.0",
+                                 pct_hypertension="38.1", pct_depression="22.4",
+                                 pct_no_lpa="30.1", pct_poor_mental_health="15.6")
+        UsdaFoodEnv.objects.create(fips="06037", data_year=2018,
+                                   pct_low_food_access="12.5", groceries_per_1000="0.42",
+                                   fast_food_per_1000="2.10", pct_snap="14.2", farmers_markets=45)
 
     def test_dashboard_returns_200(self):
         resp = self.client.get("/dashboard/")
@@ -391,6 +402,32 @@ class DashboardTest(TestCase):
         resp = self.client.get("/dashboard/")
         self.assertIn(b"pct_low_food_access", resp.content)
         self.assertIn(b"foodMetricLabels", resp.content)
+
+    def test_dashboard_has_scatter_chart(self):
+        resp = self.client.get("/dashboard/")
+        self.assertIn(b"scatterChart", resp.content)
+        self.assertIn(b"scatterXSelect", resp.content)
+        self.assertIn(b"scatterYSelect", resp.content)
+
+    def test_dashboard_has_county_table(self):
+        resp = self.client.get("/dashboard/")
+        self.assertIn(b"countyTableHead", resp.content)
+        self.assertIn(b"countyTableBody", resp.content)
+
+    def test_dashboard_embeds_state_health_json(self):
+        resp = self.client.get("/dashboard/")
+        self.assertIn(b"stateHealth", resp.content)
+        self.assertIn(b"avg_pct_obesity", resp.content)
+
+    def test_dashboard_embeds_state_food_json(self):
+        resp = self.client.get("/dashboard/")
+        self.assertIn(b"stateFood", resp.content)
+        self.assertIn(b"avg_pct_low_food_access", resp.content)
+
+    def test_dashboard_metric_select_has_optgroups(self):
+        resp = self.client.get("/dashboard/")
+        self.assertIn(b"Census ACS5", resp.content)
+        self.assertIn(b"CDC PLACES", resp.content)
 
 
 class ExternalSourceAPITest(TestCase):

@@ -239,7 +239,11 @@ from ingest_usda_food_env import load_workbook_data, upsert as usda_upsert, _saf
 
 
 def _make_workbook(sheets: dict[str, list[list]]):
-    """Build a minimal openpyxl workbook in memory for testing."""
+    """Build a minimal openpyxl workbook in memory for testing.
+
+    Prepends a dummy title row to each sheet so that row 1 is the title (skipped
+    by ingestion) and row 2 is the actual header, matching the real USDA xlsx layout.
+    """
     import openpyxl
     wb = openpyxl.Workbook()
     first = True
@@ -250,6 +254,7 @@ def _make_workbook(sheets: dict[str, list[list]]):
             first = False
         else:
             ws = wb.create_sheet(sheet_name)
+        ws.append([sheet_name])  # title row — ingestion skips this
         for row in rows:
             ws.append(row)
     return wb
