@@ -353,21 +353,37 @@ Source: [`server/dashboard/`](server/dashboard/)
 
 A browser-based dashboard served at `/dashboard/`. Built with Django templates, Bootstrap 5, and Chart.js.
 
-State-level data is embedded as JSON at render time. County-level data is fetched via AJAX when a state is selected from the drill-down dropdown. County names are cached client-side in `countyNameCache`.
+State-level Census data is embedded as JSON at render time. All county-level data is fetched via AJAX when a state is selected. Results are cached client-side per state so metric switching is instant after the first load.
 
-### Charts
+### All-states mode (no state selected)
 
 | Chart | Type | Data source |
 |---|---|---|
-| National Trend | Line | `agg_national_summary` |
-| State/County Ranking | Horizontal bar | `agg_state_summary` / `/api/aggregates/rankings/` |
-| YoY Movers | Horizontal bar (top 5 + bottom 5) | `agg_yoy` / `/api/aggregates/yoy/` |
+| National Trend | Line | `agg_national_summary` (embedded) |
+| State Ranking | Horizontal bar | `agg_state_summary` (embedded) |
+| YoY Movers | Horizontal bar (top 5 + bottom 5) | `agg_yoy` (embedded) |
+
+### County drill-down mode (state selected)
+
+All five charts update; three additional cards appear:
+
+| Chart | Type | Data source |
+|---|---|---|
+| National Trend | Line | `agg_national_summary` (embedded, unchanged) |
+| County Ranking | Horizontal bar | `/api/aggregates/rankings/` |
+| YoY Movers | Horizontal bar (top 5 + bottom 5) | `/api/aggregates/yoy/` |
+| Health Outcomes | Horizontal bar | `/api/health/` (CDC PLACES) |
+| Food Environment | Horizontal bar | `/api/food/` (USDA Atlas) |
+
+All five county-level fetches are issued in a single `Promise.all()`. Health and food data are cached separately (`healthCache`, `foodCache`) so switching their metric dropdowns re-renders locally without re-fetching.
 
 ### Controls
 
-- **Metric** dropdown — one of six Census metrics
-- **Year** dropdown — vintage year (2018–2022)
-- **Drill into State** dropdown — switches ranking and YoY charts from state-level to county-level for the selected state; fetches data via `Promise.all()` AJAX calls
+- **Metric** dropdown — one of six Census metrics; updates all Census charts
+- **Year** dropdown — vintage year (2018–2022); updates Census and health charts
+- **Drill into State** dropdown — activates county mode; fetches all county data in parallel
+- **Health metric** dropdown (county mode only) — selects which CDC PLACES measure to rank
+- **Food metric** dropdown (county mode only) — selects which USDA food metric to rank
 
 ---
 
@@ -380,7 +396,7 @@ Run with:
 python -m pytest tests/ -v
 ```
 
-**173 tests total.**
+**177 tests total.**
 
 ### test_ingestion.py — 36 unit tests
 
@@ -392,7 +408,7 @@ Uses Django's `TestCase` with a real PostgreSQL test database. All `managed = Fa
 
 - **`GeoAPITest`** — core endpoints, all filter params, 404, estimate ordering, validation
 - **`AggregateAPITest`** — all four aggregate endpoints, filter params, validation
-- **`DashboardTest`** — 200 response, embedded JSON, chart canvas IDs, selectors
+- **`DashboardTest`** — 200 response, embedded JSON, chart canvas IDs (including `healthChart`, `foodChart`), health/food metric label embedding, `externalSection` presence
 - **`ExternalSourceAPITest`** — `/api/health/`, `/api/labor/`, `/api/food/`: all filter params and field presence
 - **`CountyProfileAPITest`** — `/api/profile/`: filter by fips and state_fips, all source fields present, pagination
 
@@ -481,5 +497,5 @@ export $(grep -v '^#' config/.env | xargs)
 
 ### Platform
 - **Token-based auth** — rate limiting and enterprise private views
-- **Dashboard cross-source panel** — show county_profile data in the drill-down view alongside Census charts
+- **BLS labor panel** — add a county unemployment comparison chart using BLS LAUS data alongside the Census unemployment rate
 - **World Bank / WHO** — country-level development indicators
