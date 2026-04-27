@@ -373,6 +373,25 @@ class DashboardTest(TestCase):
         resp = self.client.get("/dashboard/")
         self.assertIn(b"yearSelect", resp.content)
 
+    def test_dashboard_has_health_and_food_canvases(self):
+        resp = self.client.get("/dashboard/")
+        self.assertIn(b"healthChart", resp.content)
+        self.assertIn(b"foodChart", resp.content)
+
+    def test_dashboard_has_external_section(self):
+        resp = self.client.get("/dashboard/")
+        self.assertIn(b"externalSection", resp.content)
+
+    def test_dashboard_embeds_health_metric_labels(self):
+        resp = self.client.get("/dashboard/")
+        self.assertIn(b"pct_obesity", resp.content)
+        self.assertIn(b"healthMetricLabels", resp.content)
+
+    def test_dashboard_embeds_food_metric_labels(self):
+        resp = self.client.get("/dashboard/")
+        self.assertIn(b"pct_low_food_access", resp.content)
+        self.assertIn(b"foodMetricLabels", resp.content)
+
 
 class ExternalSourceAPITest(TestCase):
     """Tests for /api/health/, /api/labor/, /api/food/."""

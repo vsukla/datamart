@@ -28,6 +28,12 @@
       background: #dbeafe; color: #1d4ed8; font-size: .75rem; font-weight: 600;
       text-transform: none; letter-spacing: 0;
     }
+    .source-badge {
+      display: inline-block; padding: 2px 8px; border-radius: 99px;
+      font-size: .72rem; font-weight: 600; text-transform: none; letter-spacing: 0;
+    }
+    .badge-health { background: #fce7f3; color: #9d174d; }
+    .badge-food   { background: #d1fae5; color: #065f46; }
     #loadingOverlay {
       display: none; position: fixed; inset: 0;
       background: rgba(255,255,255,.6); z-index: 999;
@@ -35,6 +41,7 @@
     }
     #loadingOverlay.active { display: flex; }
     .spinner-border { width: 2.5rem; height: 2.5rem; color: #3b82f6; }
+    .no-data-note { font-size: .85rem; color: #94a3b8; text-align: center; padding: 2rem 0; }
   </style>
 </head>
 <body>
@@ -43,7 +50,7 @@
 
 <nav class="navbar navbar-dark px-4 py-3">
   <span class="navbar-brand fw-bold fs-5">Datamart</span>
-  <span class="text-white-50 small">Census ACS5 · 2018–2022</span>
+  <span class="text-white-50 small">Census ACS5 · CDC PLACES · BLS LAUS · USDA Food Env</span>
 </nav>
 
 <div class="container-fluid px-4 py-4">
@@ -74,7 +81,7 @@
     </div>
     <div class="col">
       <p class="text-muted small mb-0 pb-1">
-        Select a state to compare its counties. National trend always shows state-level averages.
+        Select a state to compare its counties across Census, health, and food environment data.
       </p>
     </div>
   </div>
@@ -96,8 +103,8 @@
     </div>
   </div>
 
-  <!-- Ranking + YoY -->
-  <div class="row g-4">
+  <!-- Census: Ranking + YoY -->
+  <div class="row g-4 mb-4">
     <div class="col-xl-7 col-lg-6">
       <div class="card h-100">
         <div class="card-header d-flex justify-content-between align-items-center">
@@ -126,28 +133,94 @@
     </div>
   </div>
 
+  <!-- Health + Food (county drill-down only) -->
+  <div id="externalSection" class="d-none">
+    <div class="row g-4">
+
+      <!-- Health Outcomes -->
+      <div class="col-xl-6">
+        <div class="card h-100">
+          <div class="card-header d-flex justify-content-between align-items-center">
+            <span>
+              Health Outcomes
+              <span class="source-badge badge-health ms-1">CDC PLACES</span>
+            </span>
+            <select id="healthMetricSelect" class="form-select form-select-sm w-auto"
+                    style="font-size:.8rem;text-transform:none;letter-spacing:0;font-weight:400;">
+            </select>
+          </div>
+          <div class="card-body p-2">
+            <div id="healthNote" class="no-data-note d-none">No CDC PLACES data for this state / year.</div>
+            <div style="position:relative;height:660px;">
+              <canvas id="healthChart"></canvas>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Food Environment -->
+      <div class="col-xl-6">
+        <div class="card h-100">
+          <div class="card-header d-flex justify-content-between align-items-center">
+            <span>
+              Food Environment
+              <span class="source-badge badge-food ms-1">USDA Atlas</span>
+            </span>
+            <select id="foodMetricSelect" class="form-select form-select-sm w-auto"
+                    style="font-size:.8rem;text-transform:none;letter-spacing:0;font-weight:400;">
+            </select>
+          </div>
+          <div class="card-body p-2">
+            <div id="foodNote" class="no-data-note d-none">No USDA Food Environment data for this state.</div>
+            <div style="position:relative;height:660px;">
+              <canvas id="foodChart"></canvas>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
 </div>
 
 <script>
-  // --- Embedded data (state-level, small enough to inline) ---
-  const national     = {{ national_json|safe }};
-  const stateSummary = {{ state_summary_json|safe }};
-  const stateYoY     = {{ yoy_json|safe }};
-  const stateNames   = {{ state_names_json|safe }};
-  const metricLabels = {{ metric_labels_json|safe }};
+  // --- Embedded data ---
+  const national         = {{ national_json|safe }};
+  const stateSummary     = {{ state_summary_json|safe }};
+  const stateYoY         = {{ yoy_json|safe }};
+  const stateNames       = {{ state_names_json|safe }};
+  const metricLabels     = {{ metric_labels_json|safe }};
+  const healthMetricLabels = {{ health_metric_labels_json|safe }};
+  const foodMetricLabels   = {{ food_metric_labels_json|safe }};
 
   const DOLLAR_METRICS = new Set(["median_income", "median_home_value"]);
+  const FOOD_COUNT_METRICS = new Set(["farmers_markets"]);
+  const FOOD_RATE_METRICS  = new Set(["groceries_per_1000", "fast_food_per_1000"]);
 
-  // --- Populate state dropdown from embedded state names ---
+  // --- Populate dropdowns ---
   const stateSelect = document.getElementById("stateSelect");
   Object.entries(stateNames)
     .sort((a, b) => a[1].localeCompare(b[1]))
     .forEach(([fips, name]) => {
       const opt = document.createElement("option");
-      opt.value = fips;
-      opt.textContent = name;
+      opt.value = fips; opt.textContent = name;
       stateSelect.appendChild(opt);
     });
+
+  const healthMetricSelect = document.getElementById("healthMetricSelect");
+  Object.entries(healthMetricLabels).forEach(([key, label]) => {
+    const opt = document.createElement("option");
+    opt.value = key; opt.textContent = label;
+    healthMetricSelect.appendChild(opt);
+  });
+
+  const foodMetricSelect = document.getElementById("foodMetricSelect");
+  Object.entries(foodMetricLabels).forEach(([key, label]) => {
+    const opt = document.createElement("option");
+    opt.value = key; opt.textContent = label;
+    foodMetricSelect.appendChild(opt);
+  });
 
   // --- Formatting helpers ---
   function fmt(metric, v) {
@@ -158,9 +231,23 @@
     return n.toFixed(2) + "%";
   }
 
+  function fmtFood(metric, v) {
+    if (v === null || v === undefined) return "N/A";
+    const n = parseFloat(v);
+    if (FOOD_COUNT_METRICS.has(metric)) return n.toLocaleString("en-US", { maximumFractionDigits: 0 });
+    if (FOOD_RATE_METRICS.has(metric))  return n.toFixed(2) + " per 1k";
+    return n.toFixed(1) + "%";
+  }
+
   function axisFmt(metric) {
     if (DOLLAR_METRICS.has(metric))
       return v => "$" + (v >= 1000 ? Math.round(v / 1000) + "k" : v);
+    return v => v + "%";
+  }
+
+  function axisFmtFood(metric) {
+    if (FOOD_COUNT_METRICS.has(metric)) return v => v;
+    if (FOOD_RATE_METRICS.has(metric))  return v => v + "/1k";
     return v => v + "%";
   }
 
@@ -168,8 +255,10 @@
     document.getElementById("loadingOverlay").classList.toggle("active", on);
   }
 
-  // --- County name cache: state_fips → { fips: shortName } ---
+  // --- Caches ---
   const countyNameCache = {};
+  const healthCache = {};   // key: "stateFips:year"
+  const foodCache   = {};   // key: stateFips
 
   async function fetchPage(url) {
     const resp = await fetch(url);
@@ -181,16 +270,30 @@
     if (countyNameCache[stateFips]) return countyNameCache[stateFips];
     const data = await fetchPage(`/api/geo/?geo_type=county&state_fips=${stateFips}&page_size=400`);
     const names = {};
-    // "Los Angeles County, California" → "Los Angeles County"
     data.results.forEach(g => { names[g.fips] = g.name.replace(/, [^,]+$/, ""); });
     countyNameCache[stateFips] = names;
     return names;
   }
 
-  // --- Chart instances ---
-  let nationalChart, rankingChart, yoyChart;
+  async function getHealthData(stateFips, year) {
+    const key = `${stateFips}:${year}`;
+    if (healthCache[key]) return healthCache[key];
+    const data = await fetchPage(`/api/health/?state_fips=${stateFips}&year=${year}&page_size=400`);
+    healthCache[key] = data.results;
+    return data.results;
+  }
 
-  // --- National trend (always state-level) ---
+  async function getFoodData(stateFips) {
+    if (foodCache[stateFips]) return foodCache[stateFips];
+    const data = await fetchPage(`/api/food/?state_fips=${stateFips}&page_size=400`);
+    foodCache[stateFips] = data.results;
+    return data.results;
+  }
+
+  // --- Chart instances ---
+  let nationalChart, rankingChart, yoyChart, healthChart, foodChart;
+
+  // --- National trend ---
   function buildNationalChart(metric) {
     const labels = national.map(r => r.year);
     const data   = national.map(r => r[`avg_${metric}`] !== null ? parseFloat(r[`avg_${metric}`]) : null);
@@ -226,7 +329,7 @@
     });
   }
 
-  // --- Ranking bar chart (works for both state and county rows) ---
+  // --- Census ranking bar chart ---
   function buildRankingChart(rows, nameMap, metric, year, drillLabel) {
     const sorted = rows
       .map(r => ({ name: nameMap[r.fips] || r.fips, value: r.value !== null ? parseFloat(r.value) : null }))
@@ -267,7 +370,7 @@
     });
   }
 
-  // --- YoY chart (works for both state and county rows) ---
+  // --- YoY chart ---
   function buildYoYChart(rows, nameMap, metric, drillLabel) {
     const note = document.getElementById("yoyNote");
     document.getElementById("yoyChartTitle").innerHTML = drillLabel
@@ -319,6 +422,108 @@
     });
   }
 
+  // --- Health outcomes bar chart ---
+  function buildHealthChart(rows, nameMap, metricKey) {
+    const note = document.getElementById("healthNote");
+    const canvas = document.getElementById("healthChart");
+
+    const sorted = rows
+      .map(r => ({ name: nameMap[r.fips] || r.fips, value: r[metricKey] !== null ? parseFloat(r[metricKey]) : null }))
+      .filter(r => r.value !== null)
+      .sort((a, b) => b.value - a.value);
+
+    if (sorted.length === 0) {
+      note.classList.remove("d-none");
+      canvas.style.display = "none";
+      if (healthChart) { healthChart.destroy(); healthChart = null; }
+      return;
+    }
+    note.classList.add("d-none");
+    canvas.style.display = "";
+
+    if (healthChart) healthChart.destroy();
+    healthChart = new Chart(canvas, {
+      type: "bar",
+      data: {
+        labels: sorted.map(r => r.name),
+        datasets: [{
+          data: sorted.map(r => r.value),
+          backgroundColor: sorted.map((_, i) =>
+            i < 5                  ? "rgba(190,24,93,.8)"   :
+            i >= sorted.length - 5 ? "rgba(5,150,105,.75)"  :
+                                     "rgba(148,163,184,.65)"
+          ),
+          borderRadius: 3,
+        }]
+      },
+      options: {
+        indexAxis: "y", responsive: true, maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: { callbacks: { label: c => ` ${c.raw.toFixed(1)}%` } }
+        },
+        scales: {
+          x: { beginAtZero: false, ticks: { callback: v => v + "%" } },
+          y: { ticks: { font: { size: 10.5 } } }
+        }
+      }
+    });
+  }
+
+  // --- Food environment bar chart ---
+  function buildFoodChart(rows, nameMap, metricKey) {
+    const note = document.getElementById("foodNote");
+    const canvas = document.getElementById("foodChart");
+
+    // For food, take the most recent data_year per fips
+    const byFips = {};
+    rows.forEach(r => {
+      if (!byFips[r.fips] || r.data_year > byFips[r.fips].data_year) byFips[r.fips] = r;
+    });
+
+    const sorted = Object.values(byFips)
+      .map(r => ({ name: nameMap[r.fips] || r.fips, value: r[metricKey] !== null ? parseFloat(r[metricKey]) : null }))
+      .filter(r => r.value !== null)
+      .sort((a, b) => b.value - a.value);
+
+    if (sorted.length === 0) {
+      note.classList.remove("d-none");
+      canvas.style.display = "none";
+      if (foodChart) { foodChart.destroy(); foodChart = null; }
+      return;
+    }
+    note.classList.add("d-none");
+    canvas.style.display = "";
+
+    if (foodChart) foodChart.destroy();
+    foodChart = new Chart(canvas, {
+      type: "bar",
+      data: {
+        labels: sorted.map(r => r.name),
+        datasets: [{
+          data: sorted.map(r => r.value),
+          backgroundColor: sorted.map((_, i) =>
+            i < 5                  ? "rgba(5,150,105,.85)"   :
+            i >= sorted.length - 5 ? "rgba(217,119,6,.75)"   :
+                                     "rgba(148,163,184,.65)"
+          ),
+          borderRadius: 3,
+        }]
+      },
+      options: {
+        indexAxis: "y", responsive: true, maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: { callbacks: { label: c => " " + fmtFood(metricKey, c.raw) } }
+        },
+        scales: {
+          x: { beginAtZero: false, ticks: { callback: axisFmtFood(metricKey) } },
+          y: { ticks: { font: { size: 10.5 } } }
+        }
+      }
+    });
+  }
+
   // --- Main update ---
   async function updateAll() {
     const metric    = document.getElementById("metricSelect").value;
@@ -328,7 +533,10 @@
     buildNationalChart(metric);
 
     if (!stateFips) {
-      // State-level view — use embedded data, no network requests
+      document.getElementById("externalSection").classList.add("d-none");
+      if (healthChart) { healthChart.destroy(); healthChart = null; }
+      if (foodChart)   { foodChart.destroy();   foodChart   = null; }
+
       const rankRows = stateSummary
         .filter(r => r.year == year)
         .map(r => ({ fips: r.state_fips, value: r[`avg_${metric}`] }));
@@ -339,28 +547,52 @@
       return;
     }
 
-    // County drill-down — fetch from aggregate API
     setLoading(true);
     try {
-      const stateName = stateNames[stateFips];
-      const qs = `geo_type=county&state_fips=${stateFips}&year=${year}&metric=${metric}&page_size=400`;
+      const stateName   = stateNames[stateFips];
+      const censusQs    = `geo_type=county&state_fips=${stateFips}&year=${year}&metric=${metric}&page_size=400`;
+      const healthMetric = document.getElementById("healthMetricSelect").value;
+      const foodMetric   = document.getElementById("foodMetricSelect").value;
 
-      const [rankData, yoyData, countyNames] = await Promise.all([
-        fetchPage(`/api/aggregates/rankings/?${qs}`).then(d => d.results),
-        fetchPage(`/api/aggregates/yoy/?${qs}`).then(d => d.results),
+      const [rankData, yoyData, countyNames, healthData, foodData] = await Promise.all([
+        fetchPage(`/api/aggregates/rankings/?${censusQs}`).then(d => d.results),
+        fetchPage(`/api/aggregates/yoy/?${censusQs}`).then(d => d.results),
         getCountyNames(stateFips),
+        getHealthData(stateFips, year),
+        getFoodData(stateFips),
       ]);
 
       buildRankingChart(rankData, countyNames, metric, year, stateName);
       buildYoYChart(yoyData, countyNames, metric, stateName);
+
+      document.getElementById("externalSection").classList.remove("d-none");
+      buildHealthChart(healthData, countyNames, healthMetric);
+      buildFoodChart(foodData, countyNames, foodMetric);
     } finally {
       setLoading(false);
     }
   }
 
+  async function updateExternalOnly() {
+    const stateFips = document.getElementById("stateSelect").value;
+    if (!stateFips) return;
+    const year         = parseInt(document.getElementById("yearSelect").value, 10);
+    const healthMetric = document.getElementById("healthMetricSelect").value;
+    const foodMetric   = document.getElementById("foodMetricSelect").value;
+    const countyNames  = await getCountyNames(stateFips);
+    const [healthData, foodData] = await Promise.all([
+      getHealthData(stateFips, year),
+      getFoodData(stateFips),
+    ]);
+    buildHealthChart(healthData, countyNames, healthMetric);
+    buildFoodChart(foodData, countyNames, foodMetric);
+  }
+
   document.getElementById("metricSelect").addEventListener("change", updateAll);
   document.getElementById("yearSelect").addEventListener("change", updateAll);
   document.getElementById("stateSelect").addEventListener("change", updateAll);
+  document.getElementById("healthMetricSelect").addEventListener("change", updateExternalOnly);
+  document.getElementById("foodMetricSelect").addEventListener("change", updateExternalOnly);
   updateAll();
 </script>
 </body>

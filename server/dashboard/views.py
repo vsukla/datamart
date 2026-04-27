@@ -12,6 +12,24 @@ METRIC_LABELS = {
     "unemployment_rate":  "Unemployment Rate (%)",
 }
 
+HEALTH_METRIC_LABELS = {
+    "pct_obesity":            "Obesity (%)",
+    "pct_diabetes":           "Diabetes (%)",
+    "pct_smoking":            "Current Smoking (%)",
+    "pct_hypertension":       "High Blood Pressure (%)",
+    "pct_depression":         "Depression (%)",
+    "pct_no_lpa":             "No Physical Activity (%)",
+    "pct_poor_mental_health": "Poor Mental Health (%)",
+}
+
+FOOD_METRIC_LABELS = {
+    "pct_low_food_access": "Low Food Access (%)",
+    "groceries_per_1000":  "Grocery Stores per 1,000",
+    "fast_food_per_1000":  "Fast Food per 1,000",
+    "pct_snap":            "SNAP Participation (%)",
+    "farmers_markets":     "Farmers Markets (count)",
+}
+
 
 class DashboardView(TemplateView):
     template_name = "dashboard/index.html"
@@ -40,12 +58,14 @@ class DashboardView(TemplateView):
         }
 
         ctx.update({
-            "national_json":      json.dumps(national, cls=DjangoJSONEncoder),
-            "state_summary_json": json.dumps(state_summary, cls=DjangoJSONEncoder),
-            "yoy_json":           json.dumps(yoy, cls=DjangoJSONEncoder),
-            "state_names_json":   json.dumps(state_names),
-            "metric_labels_json": json.dumps(METRIC_LABELS),
-            "metric_labels":      METRIC_LABELS,
-            "years":              list(range(2018, 2023)),
+            "national_json":             json.dumps(national, cls=DjangoJSONEncoder),
+            "state_summary_json":        json.dumps(state_summary, cls=DjangoJSONEncoder),
+            "yoy_json":                  json.dumps(yoy, cls=DjangoJSONEncoder),
+            "state_names_json":          json.dumps(state_names),
+            "metric_labels_json":        json.dumps(METRIC_LABELS),
+            "metric_labels":             METRIC_LABELS,
+            "health_metric_labels_json": json.dumps(HEALTH_METRIC_LABELS),
+            "food_metric_labels_json":   json.dumps(FOOD_METRIC_LABELS),
+            "years":                     list(range(2018, 2023)),
         })
         return ctx
