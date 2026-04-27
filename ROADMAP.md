@@ -20,6 +20,9 @@ Core architecture, Census data, first external sources, dashboard.
 | `county_profile` cross-source view + `/api/profile/` | ✅ |
 | Dashboard — Census national trend, state/county ranking, YoY | ✅ |
 | Dashboard — county drill-down (Census + health + food panels) | ✅ |
+| Dashboard — health/food metrics in state-level ranking dropdown | ✅ |
+| Dashboard — cross-source scatter chart (any metric × any metric) | ✅ |
+| Dashboard — county data table (all sources, sortable) | ✅ |
 | `schema/schema.sql` canonical DDL + migration runner | ✅ |
 | 177 tests | ✅ |
 
@@ -65,6 +68,7 @@ Add 6–8 more county/state datasets. Same architecture, wider profile.
 | Crime + safety panel (county drill-down) | ⬜ | After 2a |
 | Scheduled daily `compute_aggregates.py` via GitHub Actions | ⬜ | Issue #18 |
 | Range filters on `/api/estimates/` (e.g. `pct_poverty__gte=20`) | ⬜ | Issue #14 |
+| Tests for scatter/table/health-food-ranking dashboard features | 🔜 | Issue #25 |
 
 ---
 
@@ -124,6 +128,10 @@ Issues tracked in GitHub: https://github.com/vsukla/datamart/issues
 | #16 | World Bank data source | 5 |
 | #17 | Token-based auth + rate limiting | 5 |
 | #18 | Schedule compute_aggregates.py via GitHub Actions | 2e |
+| #22 | Cross-source dynamic query API `/api/query/` | 5 |
+| #23 | BLS LAUS: switch to flat-file download (no rate limit) | 2 |
+| #24 | Fix `fast_food_per_1000` column — actually full-service restaurant data | data quality |
+| #25 | Tests for cross-source dashboard features | 2e |
 
 ---
 

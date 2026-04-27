@@ -60,13 +60,19 @@ Build the core architecture around U.S. geographic entities. Establish the inges
 **Delivered:**
 - `geo_entities` — 3,283 states and counties with FIPS codes
 - Census ACS5 — income, education, housing, poverty, employment (2018–2022)
-- CDC PLACES — county-level health outcomes (obesity, diabetes, smoking, hypertension, depression, physical activity, mental health)
-- BLS LAUS — county-level annual unemployment and labor force
-- USDA Food Environment Atlas — food access, grocery density, fast food, SNAP, farmers markets
+- CDC PLACES — county-level health outcomes (obesity, diabetes, smoking, hypertension, depression, physical activity, mental health); 2,956 counties for 2023 vintage
+- BLS LAUS — county-level annual unemployment and labor force; 880 counties loaded (rate-limited; see issue #23)
+- USDA Food Environment Atlas — food access, grocery density, restaurant density, SNAP, farmers markets; 3,153 counties for 2018 vintage
 - Pre-computed aggregates: national summary, state rollups, rankings, year-over-year changes
 - REST API: `/api/geo/`, `/api/estimates/`, `/api/aggregates/`, `/api/health/`, `/api/labor/`, `/api/food/`, `/api/profile/`
-- Cross-source county profile view (`county_profile`) joining all sources
-- Interactive dashboard with Census, health, and food panels; county drill-down
+- Cross-source county profile view (`county_profile`) joining all sources at most-recent year per source
+- Interactive dashboard:
+  - All-states mode: national trend, state ranking, YoY for Census + health + food metrics
+  - County drill-down: county ranking, YoY, CDC PLACES health panel, USDA food panel
+  - Cross-source scatter chart — any metric vs any metric across all sources
+  - County data table — all sources in one sortable table (11 columns)
+
+**Known gaps:** BLS LAUS data is partial (880/3,231 counties) due to API rate limits — see issue #23. Column `fast_food_per_1000` actually contains full-service restaurant data — see issue #24.
 
 **Success criteria:** A researcher can query all county-level indicators in a single API call and get a complete socioeconomic + health + food profile.
 
@@ -79,16 +85,16 @@ Add more county/state-level datasets from data.gov and federal APIs — no archi
 
 **Target datasets:**
 
-| Dataset | Agency | Key metrics |
-|---|---|---|
-| Air Quality Index | EPA AQS | County AQI, PM2.5, ozone days |
-| Crime rates | FBI Crime Data Explorer | Violent/property crime per 100k |
-| Fair Market Rents | HUD | 1BR–4BR FMR by county |
-| Medicare utilization | CMS | Spending per beneficiary, chronic conditions |
-| Climate normals | NOAA | Avg temp, precip, extreme weather days |
-| Traffic fatalities | NHTSA FARS | Fatalities per 100k, per 100M VMT |
-| Energy consumption | EIA | Electricity/gas by sector (state-level) |
-| School performance | Dept of Education | Graduation rates, mapped to county |
+| Dataset | Agency | Key metrics | Status |
+|---|---|---|---|
+| Air Quality Index | EPA AQS | County AQI, PM2.5, ozone days | 🔜 Next |
+| Crime rates | FBI Crime Data Explorer | Violent/property crime per 100k | 🔜 Next |
+| Traffic fatalities | NHTSA FARS | Fatalities per 100k, per 100M VMT | ⬜ Planned |
+| Fair Market Rents | HUD | 1BR–4BR FMR by county | ⬜ Planned |
+| Energy consumption | EIA | Electricity/gas by sector (state-level) | ⬜ Planned |
+| Medicare utilization | CMS | Spending per beneficiary, chronic conditions | ⬜ Planned |
+| Health Shortage Areas | HRSA | Primary care, dental, mental health deserts | ⬜ Planned |
+| School performance | Dept of Education | Graduation rates, mapped to county | ⬜ Planned |
 
 **Deliverables:**
 - 6–8 new ingestion scripts following the existing pattern

@@ -2,7 +2,7 @@
 Ingests CDC PLACES county-level health outcomes from the CDC Socrata API.
 
 Source: CDC PLACES – Local Data for Better Health, County Data
-URL:    https://chronicdata.cdc.gov/resource/i46a-9kgh.json
+URL:    https://data.cdc.gov/resource/swc5-untb.json
 
 Measures fetched (crude prevalence):
   OBESITY   → pct_obesity
@@ -36,7 +36,7 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-SOCRATA_URL = "https://chronicdata.cdc.gov/resource/i46a-9kgh.json"
+SOCRATA_URL = "https://data.cdc.gov/resource/swc5-untb.json"
 MEASURE_MAP = {
     "OBESITY":    "pct_obesity",
     "DIABETES":   "pct_diabetes",
@@ -52,7 +52,7 @@ PAGE_LIMIT = 50_000
 def fetch_places(year: int, app_token: str | None = None) -> list[dict]:
     """Fetch all county PLACES records for the given year from Socrata."""
     where = (
-        f"year={year} AND geo_level='County' AND data_value_type='Crude prevalence'"
+        f"year='{year}' AND data_value_type='Crude prevalence'"
         f" AND measureid in ({','.join(repr(m) for m in MEASURE_MAP)})"
     )
     params = {
@@ -154,7 +154,7 @@ def ingest(conn, year: int, app_token: str | None = None) -> int:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--year", type=int, default=2022)
+    parser.add_argument("--year", type=int, default=2023)
     parser.add_argument("--app-token", default=os.environ.get("CDC_APP_TOKEN"))
     args = parser.parse_args()
 

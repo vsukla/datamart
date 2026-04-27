@@ -2,7 +2,7 @@
 Ingests USDA Food Environment Atlas data at county level.
 
 Source: USDA Economic Research Service
-Download: https://www.ers.usda.gov/webdocs/DataFiles/80591/FoodEnvironmentAtlas.xls
+Download: https://www.ers.usda.gov/media/5569/food-environment-atlas-data-download.xlsx
 
 The file is an Excel workbook with multiple sheets. This script reads
 the relevant sheets and loads selected metrics into usda_food_env.
@@ -40,7 +40,7 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 USDA_URL = (
-    "https://www.ers.usda.gov/webdocs/DataFiles/80591/FoodEnvironmentAtlas.xls"
+    "https://www.ers.usda.gov/media/5569/food-environment-atlas-data-download.xlsx"
 )
 
 # (sheet_name, source_column, dest_column, numeric_type)
@@ -80,6 +80,7 @@ def load_workbook_data(path_or_bytes) -> dict[str, dict]:
 
         ws = wb[sheet_name]
         rows = ws.iter_rows(values_only=True)
+        next(rows)  # skip title row (row 1 is the sheet name, row 2 is the header)
         header = [str(c).strip() if c is not None else "" for c in next(rows)]
 
         fips_idx = next((i for i, h in enumerate(header) if h.upper() == "FIPS"), None)
@@ -92,7 +93,10 @@ def load_workbook_data(path_or_bytes) -> dict[str, dict]:
         for row in rows:
             if row[fips_idx] is None:
                 continue
-            fips = str(int(row[fips_idx])).zfill(5)
+            try:
+                fips = str(int(row[fips_idx])).zfill(5)
+            except (ValueError, TypeError):
+                continue  # skip N/A or non-numeric FIPS (state totals, etc.)
             val  = _safe(row[col_idx], cast)
             records.setdefault(fips, {})[dst_col] = val
 

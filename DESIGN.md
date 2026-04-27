@@ -210,7 +210,7 @@ County-level health outcome estimates from CDC PLACES (crude prevalence %). One 
 | `pct_no_lpa`           | NUMERIC(5,1) | LPA (no leisure-time physical activity) |
 | `pct_poor_mental_health` | NUMERIC(5,1) | MHLTH        |
 
-Source: Socrata API at `https://chronicdata.cdc.gov/resource/i46a-9kgh.json`
+Source: Socrata API at `https://data.cdc.gov/resource/swc5-untb.json`
 
 #### `bls_laus`
 
@@ -237,7 +237,7 @@ County-level food environment metrics from the USDA Food Environment Atlas Excel
 | `pct_snap`           | NUMERIC(5,1) | ASSISTANCE    | PCT_SNAP17       |
 | `farmers_markets`    | INTEGER      | LOCAL         | FMRKT18          |
 
-Download from USDA ERS. Run with `--file /path/to/FoodEnvironmentAtlas.xls` or `--download`.
+Download from USDA ERS (`https://www.ers.usda.gov/media/5569/food-environment-atlas-data-download.xlsx`). The workbook has a title row in row 1 and column headers in row 2; the script skips the title row automatically. Sentinel value `-9999` is treated as NULL. Run with `--file /path/to/atlas.xlsx` or `--download`.
 
 ### `county_profile` View
 
@@ -290,7 +290,7 @@ Source: [ingestion/ingest_usda_food_env.py](ingestion/ingest_usda_food_env.py)
 Reads the USDA ERS Excel workbook (multiple sheets) using `openpyxl`. Merges columns from ACCESS, STORES, RESTAURANTS, ASSISTANCE, and LOCAL sheets by county FIPS. Upserts into `usda_food_env`.
 
 ```bash
-python ingestion/ingest_usda_food_env.py --file /path/to/FoodEnvironmentAtlas.xls [--data-year 2018]
+python ingestion/ingest_usda_food_env.py --file /path/to/atlas.xlsx [--data-year 2018]
 python ingestion/ingest_usda_food_env.py --download [--data-year 2018]
 ```
 
@@ -353,37 +353,58 @@ Source: [`server/dashboard/`](server/dashboard/)
 
 A browser-based dashboard served at `/dashboard/`. Built with Django templates, Bootstrap 5, and Chart.js.
 
-State-level Census data is embedded as JSON at render time. All county-level data is fetched via AJAX when a state is selected. Results are cached client-side per state so metric switching is instant after the first load.
+All state-level aggregate data (Census, health, food) is embedded as JSON at render time. County-level data is fetched via AJAX when a state is selected. All results are cached client-side per state×year key so metric and chart switching after the first load is instant.
+
+### Data embedded at render time
+
+| Variable | Source |
+|---|---|
+| `national` | `agg_national_summary` — national Census averages per year |
+| `stateSummary` | `agg_state_summary` — state-level Census rollups per year |
+| `stateYoY` | `agg_yoy` (state rows only) — Census year-over-year changes |
+| `stateHealth` | `cdc_places` GROUP BY LEFT(fips,2) — state avg of all 7 health metrics |
+| `stateFood` | `usda_food_env` GROUP BY LEFT(fips,2) — state avg of all 5 food metrics; sentinel-filtered with `__gte=0` per column |
 
 ### All-states mode (no state selected)
 
 | Chart | Type | Data source |
 |---|---|---|
-| National Trend | Line | `agg_national_summary` (embedded) |
-| State Ranking | Horizontal bar | `agg_state_summary` (embedded) |
-| YoY Movers | Horizontal bar (top 5 + bottom 5) | `agg_yoy` (embedded) |
+| National Trend | Line | `national` (embedded) — Census metrics only; hidden for health/food metrics |
+| State Ranking | Horizontal bar | `stateSummary` (Census), `stateHealth`, or `stateFood` depending on active metric |
+| YoY Movers | Horizontal bar (top 5 + bottom 5) | `stateYoY` (Census metrics only); shows "not available" note for health/food |
 
 ### County drill-down mode (state selected)
 
-All five charts update; three additional cards appear:
+Seven panels are shown. County-level data is fetched in a single `Promise.all()`.
 
-| Chart | Type | Data source |
-|---|---|---|
-| National Trend | Line | `agg_national_summary` (embedded, unchanged) |
-| County Ranking | Horizontal bar | `/api/aggregates/rankings/` |
-| YoY Movers | Horizontal bar (top 5 + bottom 5) | `/api/aggregates/yoy/` |
-| Health Outcomes | Horizontal bar | `/api/health/` (CDC PLACES) |
-| Food Environment | Horizontal bar | `/api/food/` (USDA Atlas) |
+| Panel | Type | Data source | Cache key |
+|---|---|---|---|
+| National Trend | Line | Embedded (unchanged) | — |
+| County Ranking | Horizontal bar | `/api/aggregates/rankings/` (Census) or `profileData` (health/food) | — |
+| YoY Movers | Horizontal bar | `/api/aggregates/yoy/` (Census); note for health/food | — |
+| Health Outcomes | Horizontal bar | `/api/health/?state_fips&year` | `healthCache[stateFips:year]` |
+| Food Environment | Horizontal bar | `/api/food/?state_fips` | `foodCache[stateFips]` |
+| Cross-source Scatter | Scatter | `/api/profile/?state_fips` | `profileCache[stateFips]` |
+| County Data Table | Sortable table | `/api/profile/?state_fips` | `profileCache[stateFips]` (shared) |
 
-All five county-level fetches are issued in a single `Promise.all()`. Health and food data are cached separately (`healthCache`, `foodCache`) so switching their metric dropdowns re-renders locally without re-fetching.
+Scatter and table share the same `profileData` fetch. Switching any sub-metric dropdown triggers `updateExternalOnly()`, which re-renders health, food, scatter, and table from cached data without re-fetching.
 
 ### Controls
 
-- **Metric** dropdown — one of six Census metrics; updates all Census charts
-- **Year** dropdown — vintage year (2018–2022); updates Census and health charts
-- **Drill into State** dropdown — activates county mode; fetches all county data in parallel
-- **Health metric** dropdown (county mode only) — selects which CDC PLACES measure to rank
-- **Food metric** dropdown (county mode only) — selects which USDA food metric to rank
+- **Metric** dropdown — grouped optgroups covering all three sources: Census ACS5 (6 metrics), Health — CDC PLACES (7 metrics), Food — USDA Atlas (5 metrics). Drives the ranking chart and national trend.
+- **Year** dropdown — vintage year (2018–2022); drives Census ranking/YoY and health endpoint calls.
+- **Drill into State** dropdown — activates county mode; triggers a `Promise.all()` for all county data.
+- **Health metric** dropdown (county mode) — which CDC PLACES measure to show in the health bar chart.
+- **Food metric** dropdown (county mode) — which USDA metric to show in the food bar chart.
+- **Scatter X / Y** dropdowns (county mode) — any metric from any source on each axis.
+
+### Cross-source scatter
+
+Plots each county in a selected state as a point with one metric on each axis. Defaults to Poverty Rate (X) vs Obesity % (Y). Any metric from any source can be chosen for either axis via the two selects in the card header. Negative and sentinel values are excluded (`x < 0 || y < 0`). County name appears in the tooltip.
+
+### County data table
+
+Sortable by any column. Shows 11 columns from all four sources per county: County Name, Population, Median Income, Poverty %, Bachelors %, Obesity %, Diabetes %, Depression %, Low Food Access %, SNAP %, Grocery Stores /1k. Column headers are color-coded by source (blue = Census, pink = Health, green = Food). Click a header to sort ascending; click again to sort descending.
 
 ---
 
@@ -497,5 +518,5 @@ export $(grep -v '^#' config/.env | xargs)
 
 ### Platform
 - **Token-based auth** — rate limiting and enterprise private views
-- **BLS labor panel** — add a county unemployment comparison chart using BLS LAUS data alongside the Census unemployment rate
+- **BLS LAUS full load** — BLS free tier is capped at 500 API calls/day; register a free API key (`BLS_API_KEY` in `.env`) to load all ~3,200 counties in one run, or switch to the annual flat-file download (`laucnty{yy}.xlsx`)
 - **World Bank / WHO** — country-level development indicators
