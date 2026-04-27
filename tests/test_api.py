@@ -359,7 +359,7 @@ class DashboardTest(TestCase):
     def test_dashboard_has_chart_canvases(self):
         resp = self.client.get("/dashboard/")
         self.assertIn(b"nationalChart", resp.content)
-        self.assertIn(b"stateChart", resp.content)
+        self.assertIn(b"rankingChart", resp.content)
         self.assertIn(b"yoyChart", resp.content)
 
     def test_dashboard_has_metric_select(self):

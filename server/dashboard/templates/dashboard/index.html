@@ -23,9 +23,23 @@
     }
     .pill-up   { background: #dcfce7; color: #16a34a; }
     .pill-down { background: #fee2e2; color: #dc2626; }
+    .drill-badge {
+      display: inline-block; padding: 2px 10px; border-radius: 99px;
+      background: #dbeafe; color: #1d4ed8; font-size: .75rem; font-weight: 600;
+      text-transform: none; letter-spacing: 0;
+    }
+    #loadingOverlay {
+      display: none; position: fixed; inset: 0;
+      background: rgba(255,255,255,.6); z-index: 999;
+      align-items: center; justify-content: center;
+    }
+    #loadingOverlay.active { display: flex; }
+    .spinner-border { width: 2.5rem; height: 2.5rem; color: #3b82f6; }
   </style>
 </head>
 <body>
+
+<div id="loadingOverlay"><div class="spinner-border" role="status"></div></div>
 
 <nav class="navbar navbar-dark px-4 py-3">
   <span class="navbar-brand fw-bold fs-5">Datamart</span>
@@ -36,7 +50,7 @@
 
   <!-- Controls -->
   <div class="row g-3 mb-4 align-items-end">
-    <div class="col-sm-5 col-md-4 col-lg-3">
+    <div class="col-sm-5 col-md-3 col-lg-2">
       <label class="form-label">Metric</label>
       <select id="metricSelect" class="form-select form-select-sm">
         {% for key, label in metric_labels.items %}
@@ -44,7 +58,7 @@
         {% endfor %}
       </select>
     </div>
-    <div class="col-sm-3 col-md-2 col-lg-2">
+    <div class="col-sm-3 col-md-2 col-lg-1">
       <label class="form-label">Year</label>
       <select id="yearSelect" class="form-select form-select-sm">
         {% for y in years %}
@@ -52,10 +66,15 @@
         {% endfor %}
       </select>
     </div>
+    <div class="col-sm-5 col-md-3 col-lg-2">
+      <label class="form-label">Drill into State</label>
+      <select id="stateSelect" class="form-select form-select-sm">
+        <option value="">— All States —</option>
+      </select>
+    </div>
     <div class="col">
       <p class="text-muted small mb-0 pb-1">
-        National averages are population-weighted from state data.
-        State summaries roll up county-level estimates.
+        Select a state to compare its counties. National trend always shows state-level averages.
       </p>
     </div>
   </div>
@@ -77,23 +96,24 @@
     </div>
   </div>
 
-  <!-- State ranking + YoY -->
+  <!-- Ranking + YoY -->
   <div class="row g-4">
     <div class="col-xl-7 col-lg-6">
       <div class="card h-100">
-        <div class="card-header">
-          State Ranking — <span id="stateChartYear" class="text-dark" style="font-size:.9rem;text-transform:none;letter-spacing:0;"></span>
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <span id="rankingChartTitle">State Ranking</span>
+          <span id="rankingChartSubtitle" class="text-dark fw-normal" style="font-size:.9rem;text-transform:none;letter-spacing:0;"></span>
         </div>
         <div class="card-body p-2">
           <div style="position:relative;height:660px;">
-            <canvas id="stateChart"></canvas>
+            <canvas id="rankingChart"></canvas>
           </div>
         </div>
       </div>
     </div>
     <div class="col-xl-5 col-lg-6">
       <div class="card h-100">
-        <div class="card-header">Year-over-Year Change — Top &amp; Bottom 5 States</div>
+        <div class="card-header" id="yoyChartTitle">Year-over-Year Change — Top &amp; Bottom 5</div>
         <div class="card-body">
           <div id="yoyNote" class="alert alert-secondary small py-2 d-none">
             No year-over-year data for 2018 (no prior year).
@@ -106,18 +126,30 @@
     </div>
   </div>
 
-</div><!-- /container -->
+</div>
 
 <script>
-  // --- Data injected by Django ---
+  // --- Embedded data (state-level, small enough to inline) ---
   const national     = {{ national_json|safe }};
   const stateSummary = {{ state_summary_json|safe }};
-  const yoy          = {{ yoy_json|safe }};
+  const stateYoY     = {{ yoy_json|safe }};
   const stateNames   = {{ state_names_json|safe }};
   const metricLabels = {{ metric_labels_json|safe }};
 
   const DOLLAR_METRICS = new Set(["median_income", "median_home_value"]);
 
+  // --- Populate state dropdown from embedded state names ---
+  const stateSelect = document.getElementById("stateSelect");
+  Object.entries(stateNames)
+    .sort((a, b) => a[1].localeCompare(b[1]))
+    .forEach(([fips, name]) => {
+      const opt = document.createElement("option");
+      opt.value = fips;
+      opt.textContent = name;
+      stateSelect.appendChild(opt);
+    });
+
+  // --- Formatting helpers ---
   function fmt(metric, v) {
     if (v === null || v === undefined) return "N/A";
     const n = parseFloat(v);
@@ -132,20 +164,43 @@
     return v => v + "%";
   }
 
-  let nationalChart, stateChart, yoyChart;
+  function setLoading(on) {
+    document.getElementById("loadingOverlay").classList.toggle("active", on);
+  }
 
-  // --- National trend (line) ---
+  // --- County name cache: state_fips → { fips: shortName } ---
+  const countyNameCache = {};
+
+  async function fetchPage(url) {
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error(`API error: ${resp.status}`);
+    return resp.json();
+  }
+
+  async function getCountyNames(stateFips) {
+    if (countyNameCache[stateFips]) return countyNameCache[stateFips];
+    const data = await fetchPage(`/api/geo/?geo_type=county&state_fips=${stateFips}&page_size=400`);
+    const names = {};
+    // "Los Angeles County, California" → "Los Angeles County"
+    data.results.forEach(g => { names[g.fips] = g.name.replace(/, [^,]+$/, ""); });
+    countyNameCache[stateFips] = names;
+    return names;
+  }
+
+  // --- Chart instances ---
+  let nationalChart, rankingChart, yoyChart;
+
+  // --- National trend (always state-level) ---
   function buildNationalChart(metric) {
     const labels = national.map(r => r.year);
     const data   = national.map(r => r[`avg_${metric}`] !== null ? parseFloat(r[`avg_${metric}`]) : null);
 
-    // Stat badge: latest value + change from first year
     const first = data[0], last = data[data.length - 1];
     if (first !== null && last !== null) {
       const chg = ((last - first) / first * 100).toFixed(1);
-      const dir = chg >= 0;
+      const up  = chg >= 0;
       document.getElementById("nationalStat").innerHTML =
-        `${fmt(metric, last)} &nbsp;<span class="stat-pill ${dir ? "pill-up" : "pill-down"}">${dir ? "+" : ""}${chg}% since 2018</span>`;
+        `${fmt(metric, last)} &nbsp;<span class="stat-pill ${up ? "pill-up" : "pill-down"}">${up ? "+" : ""}${chg}% since 2018</span>`;
     }
 
     if (nationalChart) nationalChart.destroy();
@@ -154,15 +209,10 @@
       data: {
         labels,
         datasets: [{
-          label: metricLabels[metric],
-          data,
-          borderColor: "#3b82f6",
-          backgroundColor: "rgba(59,130,246,.08)",
-          fill: true,
-          tension: 0.35,
-          pointRadius: 5,
-          pointHoverRadius: 7,
-          pointBackgroundColor: "#3b82f6",
+          label: metricLabels[metric], data,
+          borderColor: "#3b82f6", backgroundColor: "rgba(59,130,246,.08)",
+          fill: true, tension: 0.35,
+          pointRadius: 5, pointHoverRadius: 7, pointBackgroundColor: "#3b82f6",
         }]
       },
       options: {
@@ -171,44 +221,40 @@
           legend: { display: false },
           tooltip: { callbacks: { label: c => " " + fmt(metric, c.raw) } }
         },
-        scales: {
-          y: { beginAtZero: false, ticks: { callback: axisFmt(metric) } }
-        }
+        scales: { y: { beginAtZero: false, ticks: { callback: axisFmt(metric) } } }
       }
     });
   }
 
-  // --- State ranking (horizontal bar) ---
-  function buildStateChart(metric, year) {
-    document.getElementById("stateChartYear").textContent = year;
-
-    const rows = stateSummary
-      .filter(r => r.year == year)
-      .map(r => ({
-        name:  stateNames[r.state_fips] || r.state_fips,
-        value: r[`avg_${metric}`] !== null ? parseFloat(r[`avg_${metric}`]) : null,
-      }))
+  // --- Ranking bar chart (works for both state and county rows) ---
+  function buildRankingChart(rows, nameMap, metric, year, drillLabel) {
+    const sorted = rows
+      .map(r => ({ name: nameMap[r.fips] || r.fips, value: r.value !== null ? parseFloat(r.value) : null }))
       .filter(r => r.value !== null)
       .sort((a, b) => b.value - a.value);
 
-    if (stateChart) stateChart.destroy();
-    stateChart = new Chart(document.getElementById("stateChart"), {
+    document.getElementById("rankingChartTitle").textContent =
+      drillLabel ? "County Ranking" : "State Ranking";
+    document.getElementById("rankingChartSubtitle").innerHTML =
+      drillLabel ? `<span class="drill-badge">${drillLabel}</span> · ${year}` : year;
+
+    if (rankingChart) rankingChart.destroy();
+    rankingChart = new Chart(document.getElementById("rankingChart"), {
       type: "bar",
       data: {
-        labels: rows.map(r => r.name),
+        labels: sorted.map(r => r.name),
         datasets: [{
-          data: rows.map(r => r.value),
-          backgroundColor: rows.map((_, i) =>
-            i < 5  ? "rgba(59,130,246,.85)"  :
-            i >= rows.length - 5 ? "rgba(239,68,68,.75)" :
-                     "rgba(148,163,184,.65)"
+          data: sorted.map(r => r.value),
+          backgroundColor: sorted.map((_, i) =>
+            i < 5                  ? "rgba(59,130,246,.85)"  :
+            i >= sorted.length - 5 ? "rgba(239,68,68,.75)"   :
+                                     "rgba(148,163,184,.65)"
           ),
           borderRadius: 3,
         }]
       },
       options: {
-        indexAxis: "y",
-        responsive: true, maintainAspectRatio: false,
+        indexAxis: "y", responsive: true, maintainAspectRatio: false,
         plugins: {
           legend: { display: false },
           tooltip: { callbacks: { label: c => " " + fmt(metric, c.raw) } }
@@ -221,28 +267,29 @@
     });
   }
 
-  // --- YoY movers (horizontal bar) ---
-  function buildYoYChart(metric, year) {
+  // --- YoY chart (works for both state and county rows) ---
+  function buildYoYChart(rows, nameMap, metric, drillLabel) {
     const note = document.getElementById("yoyNote");
-    const rows = yoy.filter(r => r.metric === metric && r.year == year && r.change_pct !== null);
+    document.getElementById("yoyChartTitle").innerHTML = drillLabel
+      ? `Year-over-Year Change — <span class="drill-badge">${drillLabel}</span> · Top &amp; Bottom 5`
+      : `Year-over-Year Change — Top &amp; Bottom 5 States`;
 
-    if (rows.length === 0) {
+    const valid = rows.filter(r => r.change_pct !== null);
+    if (valid.length === 0) {
       note.classList.remove("d-none");
       if (yoyChart) { yoyChart.destroy(); yoyChart = null; }
       return;
     }
     note.classList.add("d-none");
 
-    const sorted = [...rows].sort((a, b) => parseFloat(b.change_pct) - parseFloat(a.change_pct));
-    const top5   = sorted.slice(0, 5);
-    const bot5   = sorted.slice(-5).reverse();
-    const display = [...top5, ...bot5];
+    const sorted  = [...valid].sort((a, b) => parseFloat(b.change_pct) - parseFloat(a.change_pct));
+    const display = [...sorted.slice(0, 5), ...sorted.slice(-5).reverse()];
 
     if (yoyChart) yoyChart.destroy();
     yoyChart = new Chart(document.getElementById("yoyChart"), {
       type: "bar",
       data: {
-        labels: display.map(r => stateNames[r.state_fips] || r.state_fips),
+        labels: display.map(r => nameMap[r.fips] || r.fips),
         datasets: [{
           data: display.map(r => parseFloat(r.change_pct)),
           backgroundColor: display.map(r =>
@@ -252,18 +299,14 @@
         }]
       },
       options: {
-        indexAxis: "y",
-        responsive: true, maintainAspectRatio: false,
+        indexAxis: "y", responsive: true, maintainAspectRatio: false,
         plugins: {
           legend: { display: false },
           tooltip: {
             callbacks: {
               label: c => {
                 const row = display[c.dataIndex];
-                return [
-                  ` Change: ${c.raw > 0 ? "+" : ""}${c.raw}%`,
-                  ` Value:  ${fmt(metric, row.value)}`,
-                ];
+                return [` Change: ${c.raw > 0 ? "+" : ""}${c.raw}%`, ` Value:  ${fmt(metric, row.value)}`];
               }
             }
           }
@@ -276,17 +319,48 @@
     });
   }
 
-  // --- Wire up controls ---
-  function updateAll() {
-    const metric = document.getElementById("metricSelect").value;
-    const year   = parseInt(document.getElementById("yearSelect").value, 10);
+  // --- Main update ---
+  async function updateAll() {
+    const metric    = document.getElementById("metricSelect").value;
+    const year      = parseInt(document.getElementById("yearSelect").value, 10);
+    const stateFips = document.getElementById("stateSelect").value;
+
     buildNationalChart(metric);
-    buildStateChart(metric, year);
-    buildYoYChart(metric, year);
+
+    if (!stateFips) {
+      // State-level view — use embedded data, no network requests
+      const rankRows = stateSummary
+        .filter(r => r.year == year)
+        .map(r => ({ fips: r.state_fips, value: r[`avg_${metric}`] }));
+      buildRankingChart(rankRows, stateNames, metric, year, null);
+
+      const yoyRows = stateYoY.filter(r => r.metric === metric && r.year == year);
+      buildYoYChart(yoyRows, stateNames, metric, null);
+      return;
+    }
+
+    // County drill-down — fetch from aggregate API
+    setLoading(true);
+    try {
+      const stateName = stateNames[stateFips];
+      const qs = `geo_type=county&state_fips=${stateFips}&year=${year}&metric=${metric}&page_size=400`;
+
+      const [rankData, yoyData, countyNames] = await Promise.all([
+        fetchPage(`/api/aggregates/rankings/?${qs}`).then(d => d.results),
+        fetchPage(`/api/aggregates/yoy/?${qs}`).then(d => d.results),
+        getCountyNames(stateFips),
+      ]);
+
+      buildRankingChart(rankData, countyNames, metric, year, stateName);
+      buildYoYChart(yoyData, countyNames, metric, stateName);
+    } finally {
+      setLoading(false);
+    }
   }
 
   document.getElementById("metricSelect").addEventListener("change", updateAll);
   document.getElementById("yearSelect").addEventListener("change", updateAll);
+  document.getElementById("stateSelect").addEventListener("change", updateAll);
   updateAll();
 </script>
 </body>
