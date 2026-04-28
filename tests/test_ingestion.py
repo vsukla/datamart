@@ -15,9 +15,8 @@ SAMPLE_STATE = {
     "B17001_001E": "39500000",
     "B23025_005E": "1200000",
     "B23025_002E": "18900000",
-    # health insurance
-    "C27001_001E": "38000000",
-    "C27001_002E": "34200000",
+    # health insurance comes from subject endpoint, pre-injected as _pct_health_insured
+    "_pct_health_insured": 90.0,
     # commute
     "B08136_001E": "306000000",
     "B08301_001E": "18000000",
@@ -123,7 +122,7 @@ class TestNormalizeState:
 
     def test_estimate_pct_health_insured(self):
         _, est = normalize_state(SAMPLE_STATE, 2022)
-        assert est["pct_health_insured"] == round(34200000 / 38000000 * 100, 2)
+        assert est["pct_health_insured"] == 90.0
 
     def test_estimate_mean_commute_minutes(self):
         _, est = normalize_state(SAMPLE_STATE, 2022)

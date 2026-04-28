@@ -205,37 +205,48 @@ class TestBlsUpsert:
         conn.commit.assert_called_once()
 
 
+def _bls_api_response(fips_list, start, end):
+    """Build a fake BLS API v2 response for the given counties."""
+    series = []
+    for fips in fips_list:
+        for measure, col in {"06": "labor_force", "05": "employed",
+                             "04": "unemployed",  "03": "unemployment_rate"}.items():
+            sid = f"LAUCN{fips}0000000{measure}"
+            data = [{"year": str(y), "period": "M13", "value": "1000"} for y in range(start, end + 1)]
+            series.append({"seriesID": sid, "data": data})
+    return {"status": "REQUEST_SUCCEEDED", "Results": {"series": series}}
+
+
 class TestBlsIngest:
-    def test_ingest_downloads_once_per_year(self):
+    def _make_conn(self, fips_list=("06037",)):
         mock_conn = MagicMock()
         mock_cur = MagicMock()
+        mock_cur.fetchall.return_value = [(f,) for f in fips_list]
+        mock_cur.rowcount = 1
         mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cur)
         mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
-        mock_cur.rowcount = 1
+        return mock_conn, mock_cur
 
+    def test_ingest_posts_to_bls_api(self):
+        conn, _ = self._make_conn()
         mock_resp = MagicMock()
-        mock_resp.content = _SAMPLE_FLAT.encode()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = _bls_api_response(["06037"], 2021, 2022)
+        with patch("ingest_bls_laus.requests.post", return_value=mock_resp) as mock_post:
+            bls_ingest(conn, 2021, 2022)
+        assert mock_post.called
+        assert mock_post.call_args[0][0] == "https://api.bls.gov/publicAPI/v2/timeseries/data/"
 
-        with patch("ingest_bls_laus.requests.get", return_value=mock_resp) as mock_get:
-            bls_ingest(mock_conn, 2021, 2022)
-
-        assert mock_get.call_count == 2  # one download per year
-
-    def test_ingest_url_contains_year(self):
-        mock_conn = MagicMock()
-        mock_cur = MagicMock()
-        mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cur)
-        mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
-        mock_cur.rowcount = 1
-
+    def test_ingest_includes_years_in_payload(self):
+        conn, _ = self._make_conn()
         mock_resp = MagicMock()
-        mock_resp.content = _SAMPLE_FLAT.encode()
-
-        with patch("ingest_bls_laus.requests.get", return_value=mock_resp) as mock_get:
-            bls_ingest(mock_conn, 2023, 2023)
-
-        url = mock_get.call_args[0][0]
-        assert "23" in url
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = _bls_api_response(["06037"], 2022, 2022)
+        with patch("ingest_bls_laus.requests.post", return_value=mock_resp) as mock_post:
+            bls_ingest(conn, 2022, 2022)
+        payload = mock_post.call_args[1]["json"]
+        assert payload["startyear"] == "2022"
+        assert payload["endyear"] == "2022"
 
 
 # ---------------------------------------------------------------------------
