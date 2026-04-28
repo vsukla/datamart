@@ -124,29 +124,25 @@ Extend beyond county/state. Each new entity type links back to FIPS.
 
 Pick up here next session.
 
-### #26 — BLS LAUS: needs API key to populate data
+### #26 — BLS LAUS ✅ Complete
 
-| Field | Value |
-|---|---|
-| File | `ingestion/ingest_bls_laus.py` |
-| Blocker | BLS flat-file URL blocked by Akamai CDN (403 regardless of headers) |
-| Fix done | Rewrote script to use BLS Public Data API v2 (`POST /timeseries/data/`) |
-| What's left | Register free key at https://data.bls.gov/registrationEngine/registerUser.action → add `BLS_API_KEY=<key>` to `config/.env` → re-run `python ingestion/ingest_bls_laus.py` |
-| Current DB | 880 rows (old partial data); target is ~15,500 (3,100 counties × 5 years) |
-| Without key | Script still runs but hits the 25-series/day unauthenticated limit quickly |
+16,103 rows loaded (3,220 counties × 5 years). Three bugs fixed during first run:
+1. Series ID had 7 zeros instead of 8 (`LAUCN{fips}0000000{m}` → `00000000{m}`)
+2. BLS API returns max 50 series per response in practice (not documented 500); batch reduced to 50
+3. M13 (official annual average) not published for all counties; falls back to mean of M01–M12
 
-### #27 — FBI Crime: needs API key + validate state endpoint returns per-agency data
+### #27 — FBI Crime: needs schema redesign before next run
 
 | Field | Value |
 |---|---|
 | File | `ingestion/ingest_fbi_crime.py` |
-| Blocker | Old flat-file URL (`cde.ucr.cjis.gov/…/county_{year}.zip`) returns 404 |
-| Fix done | Rewrote to use FBI CDE API: agency list per state + state-level offense endpoint |
-| What's left | **Step 1**: Register free key at https://api.data.gov/signup/ → add `FBI_API_KEY=<key>` to `config/.env` |
-| | **Step 2**: Run for one year first: `python ingestion/ingest_fbi_crime.py --start 2022 --end 2022` |
-| | **Step 3**: Verify rows loaded. If 0, the state-level offense endpoint may only return a state aggregate (not per-agency). In that case, the `actuals` dict will have no `"* Offenses"` keys — add logging to confirm and switch to per-ORI calls if needed. |
+| API key | ✅ `FBI_API_KEY` added to `config/.env` |
+| State endpoint confirmed useless | `GET /summarized/state/{state}/violent-crime` returns ONLY 2 entries: `"{State} Offenses"` and `"{State} Clearances"` — no per-agency breakdown |
+| FBI CDE API was 503 | Server unavailable when we tried to count agencies across all states |
+| Current approach in code | Calls state offense endpoint then bets on per-agency entries — will produce 0 rows |
+| **Design needed** | Per-ORI calls are the only way. Size: ~18k agencies × 2 crime types × 5 years = ~180k calls. Impractical at 1000/hr rate limit. Better options: (a) get NIBRS bulk extract if FBI publishes one, (b) fetch only NIBRS-participating agencies (most are NIBRS since 2022), (c) accept only ~50% county coverage from those agencies that do report. |
+| Next step | When FBI CDE API is back up: count total agencies and NIBRS-participating agencies across all 51 states; then decide on acceptable approach |
 | Current DB | 0 rows |
-| Risk | State summarized endpoint behaviour under a real key was NOT tested (rate-limited during dev). Per-agency fallback may be required. |
 
 ### #28 — BLS LAUS Item #23 in backlog is stale
 
@@ -180,8 +176,8 @@ Issues tracked in GitHub: https://github.com/vsukla/datamart/issues
 | #23 | BLS LAUS: switch to flat-file download | 2e | ⚠️ Stale — flat files now blocked, see #26 |
 | #24 | Fix `fast_food_per_1000` column | data quality | ✅ Closed |
 | #25 | Tests for cross-source dashboard features | 2e | ✅ Closed |
-| #26 | BLS LAUS: register BLS_API_KEY and re-run ingestion | immediate | ⬜ Open |
-| #27 | FBI Crime: register FBI_API_KEY, test new CDE API ingestion | immediate | ⬜ Open |
+| #26 | BLS LAUS: register BLS_API_KEY and re-run ingestion | immediate | ✅ Done |
+| #27 | FBI Crime: redesign around per-ORI API calls; FBI CDE was 503 | immediate | ⬜ Open |
 | #28 | Reopen/relabel issue #23 once BLS API ingestion confirmed | immediate | ⬜ Open |
 | #29 | Census `mean_commute_minutes` NULL for small counties — accept or fix | data quality | ⬜ Open |
 
