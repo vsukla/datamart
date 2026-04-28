@@ -10,7 +10,7 @@ the relevant sheets and loads selected metrics into usda_food_env.
 Metrics loaded:
   Sheet "ACCESS"         → PCT_LACCESS_POP15  → pct_low_food_access
   Sheet "STORES"         → GROCPTH16          → groceries_per_1000
-  Sheet "RESTAURANTS"    → FSRPTH16           → fast_food_per_1000
+  Sheet "RESTAURANTS"    → FFRPTH16           → fast_food_per_1000
   Sheet "ASSISTANCE"     → PCT_SNAP17         → pct_snap
   Sheet "LOCAL"          → FMRKT18            → farmers_markets
 
@@ -47,7 +47,7 @@ USDA_URL = (
 COLUMNS = [
     ("ACCESS",      "PCT_LACCESS_POP15", "pct_low_food_access", float),
     ("STORES",      "GROCPTH16",         "groceries_per_1000",  float),
-    ("RESTAURANTS", "FSRPTH16",          "fast_food_per_1000",  float),
+    ("RESTAURANTS", "FFRPTH16",          "fast_food_per_1000",  float),
     ("ASSISTANCE",  "PCT_SNAP17",        "pct_snap",            float),
     ("LOCAL",       "FMRKT18",           "farmers_markets",     int),
 ]

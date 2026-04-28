@@ -1,6 +1,25 @@
 from django.db import models
 
 
+class Dataset(models.Model):
+    source_key = models.CharField(max_length=30, unique=True)
+    name = models.CharField(max_length=100)
+    description = models.TextField(blank=True, null=True)
+    source_url = models.TextField(blank=True, null=True)
+    entity_type = models.CharField(max_length=20, default="county")
+    update_cadence = models.CharField(max_length=20, blank=True, null=True)
+    row_count = models.IntegerField(null=True)
+    null_rates = models.JSONField(null=True)
+    last_ingested_at = models.DateTimeField(null=True)
+    quality_computed_at = models.DateTimeField(null=True)
+    created_at = models.DateTimeField(null=True)
+
+    class Meta:
+        db_table = "datasets"
+        managed = False
+        ordering = ["source_key"]
+
+
 class GeoEntity(models.Model):
     GEO_TYPE_CHOICES = [("state", "State"), ("county", "County")]
 
@@ -32,6 +51,12 @@ class CensusAcs5(models.Model):
     pct_owner_occupied = models.DecimalField(max_digits=5, decimal_places=2, null=True)
     pct_poverty = models.DecimalField(max_digits=5, decimal_places=2, null=True)
     unemployment_rate = models.DecimalField(max_digits=5, decimal_places=2, null=True)
+    pct_health_insured = models.DecimalField(max_digits=5, decimal_places=2, null=True)
+    mean_commute_minutes = models.DecimalField(max_digits=5, decimal_places=1, null=True)
+    pct_white = models.DecimalField(max_digits=5, decimal_places=2, null=True)
+    pct_black = models.DecimalField(max_digits=5, decimal_places=2, null=True)
+    pct_hispanic = models.DecimalField(max_digits=5, decimal_places=2, null=True)
+    pct_asian = models.DecimalField(max_digits=5, decimal_places=2, null=True)
     fetched_at = models.DateTimeField(null=True)
 
     class Meta:
@@ -160,8 +185,46 @@ class UsdaFoodEnv(models.Model):
         ordering = ["fips", "data_year"]
 
 
+class EpaAqi(models.Model):
+    fips = models.CharField(max_length=5)
+    year = models.SmallIntegerField()
+    days_with_aqi = models.SmallIntegerField(null=True)
+    good_days = models.SmallIntegerField(null=True)
+    moderate_days = models.SmallIntegerField(null=True)
+    unhealthy_sensitive_days = models.SmallIntegerField(null=True)
+    unhealthy_days = models.SmallIntegerField(null=True)
+    very_unhealthy_days = models.SmallIntegerField(null=True)
+    hazardous_days = models.SmallIntegerField(null=True)
+    max_aqi = models.SmallIntegerField(null=True)
+    median_aqi = models.DecimalField(max_digits=6, decimal_places=1, null=True)
+    pm25_days = models.SmallIntegerField(null=True)
+    ozone_days = models.SmallIntegerField(null=True)
+    fetched_at = models.DateTimeField(null=True)
+
+    class Meta:
+        db_table = "epa_aqi"
+        managed = False
+        ordering = ["fips", "year"]
+
+
+class FbiCrime(models.Model):
+    fips = models.CharField(max_length=5)
+    year = models.SmallIntegerField()
+    population_covered = models.IntegerField(null=True)
+    violent_crimes = models.IntegerField(null=True)
+    violent_crime_rate = models.DecimalField(max_digits=8, decimal_places=1, null=True)
+    property_crimes = models.IntegerField(null=True)
+    property_crime_rate = models.DecimalField(max_digits=8, decimal_places=1, null=True)
+    fetched_at = models.DateTimeField(null=True)
+
+    class Meta:
+        db_table = "fbi_crime"
+        managed = False
+        ordering = ["fips", "year"]
+
+
 class CountyProfile(models.Model):
-    """Read-only view joining Census ACS5, CDC PLACES, BLS LAUS, and USDA Food Env."""
+    """Read-only view joining Census ACS5, CDC PLACES, BLS LAUS, USDA Food Env, EPA AQI, and FBI Crime."""
     fips = models.CharField(max_length=5, primary_key=True)
     county_name = models.CharField(max_length=200)
     state_fips = models.CharField(max_length=2)
@@ -174,6 +237,12 @@ class CountyProfile(models.Model):
     pct_owner_occupied = models.DecimalField(max_digits=5, decimal_places=2, null=True)
     pct_poverty = models.DecimalField(max_digits=5, decimal_places=2, null=True)
     census_unemployment_rate = models.DecimalField(max_digits=5, decimal_places=2, null=True)
+    pct_health_insured = models.DecimalField(max_digits=5, decimal_places=2, null=True)
+    mean_commute_minutes = models.DecimalField(max_digits=5, decimal_places=1, null=True)
+    pct_white = models.DecimalField(max_digits=5, decimal_places=2, null=True)
+    pct_black = models.DecimalField(max_digits=5, decimal_places=2, null=True)
+    pct_hispanic = models.DecimalField(max_digits=5, decimal_places=2, null=True)
+    pct_asian = models.DecimalField(max_digits=5, decimal_places=2, null=True)
     # CDC PLACES
     places_year = models.SmallIntegerField(null=True)
     pct_obesity = models.DecimalField(max_digits=5, decimal_places=1, null=True)
@@ -196,6 +265,24 @@ class CountyProfile(models.Model):
     fast_food_per_1000 = models.DecimalField(max_digits=6, decimal_places=2, null=True)
     pct_snap = models.DecimalField(max_digits=5, decimal_places=1, null=True)
     farmers_markets = models.IntegerField(null=True)
+    # EPA AQI
+    aqi_year = models.SmallIntegerField(null=True)
+    median_aqi = models.DecimalField(max_digits=6, decimal_places=1, null=True)
+    max_aqi = models.SmallIntegerField(null=True)
+    good_days = models.SmallIntegerField(null=True)
+    moderate_days = models.SmallIntegerField(null=True)
+    unhealthy_sensitive_days = models.SmallIntegerField(null=True)
+    unhealthy_days = models.SmallIntegerField(null=True)
+    very_unhealthy_days = models.SmallIntegerField(null=True)
+    hazardous_days = models.SmallIntegerField(null=True)
+    pm25_days = models.SmallIntegerField(null=True)
+    ozone_days = models.SmallIntegerField(null=True)
+    # FBI Crime
+    crime_year = models.SmallIntegerField(null=True)
+    violent_crimes = models.IntegerField(null=True)
+    violent_crime_rate = models.DecimalField(max_digits=8, decimal_places=1, null=True)
+    property_crimes = models.IntegerField(null=True)
+    property_crime_rate = models.DecimalField(max_digits=8, decimal_places=1, null=True)
 
     class Meta:
         db_table = "county_profile"

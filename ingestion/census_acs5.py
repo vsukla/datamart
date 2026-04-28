@@ -2,7 +2,7 @@
 Fetches ACS 5-year estimates from the Census API for all states and counties
 across multiple years and loads them into PostgreSQL.
 
-Variables pulled (B-series detailed tables):
+Variables pulled (B/C-series detailed tables):
   B01003_001E - total population
   B19013_001E - median household income
   B15003_022E - bachelor's degree holders (25+)
@@ -14,6 +14,17 @@ Variables pulled (B-series detailed tables):
   B17001_001E - poverty universe (poverty denominator)
   B23025_005E - unemployed persons in labor force
   B23025_002E - total in labor force (employment denominator)
+  C27001_001E - civilian noninstitutionalized population (health insurance universe)
+  C27001_002E - with health insurance coverage
+  B08136_001E - aggregate travel time to work in minutes (non-WFH workers)
+  B08301_001E - total workers 16+
+  B08301_021E - workers who worked from home
+  B02001_001E - total population (race universe)
+  B02001_002E - white alone
+  B02001_003E - Black or African American alone
+  B02001_005E - Asian alone
+  B03003_001E - Hispanic or Latino origin universe
+  B03003_003E - Hispanic or Latino
 
 Usage:
   python census_acs5.py                    # fetch default years (2018–2022)
@@ -58,6 +69,17 @@ VARIABLES = [
     "B17001_001E",  # poverty universe
     "B23025_005E",  # unemployed
     "B23025_002E",  # in labor force
+    "C27001_001E",  # health insurance universe
+    "C27001_002E",  # with health insurance
+    "B08136_001E",  # aggregate travel time to work (minutes, non-WFH)
+    "B08301_001E",  # total workers 16+
+    "B08301_021E",  # worked from home
+    "B02001_001E",  # total population (race universe)
+    "B02001_002E",  # white alone
+    "B02001_003E",  # Black or African American alone
+    "B02001_005E",  # Asian alone
+    "B03003_001E",  # Hispanic/Latino universe
+    "B03003_003E",  # Hispanic or Latino
 ]
 
 
@@ -112,6 +134,17 @@ def _pct(numerator, denominator) -> float | None:
     return round(n / d * 100, 2)
 
 
+def _mean_commute(agg_minutes, total_workers, wfh_workers) -> float | None:
+    """Mean commute in minutes for workers who commute (excludes WFH)."""
+    agg = _int(agg_minutes)
+    total = _int(total_workers)
+    wfh = _int(wfh_workers) or 0
+    commuters = (total or 0) - wfh
+    if agg is None or commuters <= 0:
+        return None
+    return round(agg / commuters, 1)
+
+
 def _normalize(raw: dict, year: int, fips: str, geo_type: str, state_fips: str) -> tuple[dict, dict]:
     geo = {
         "fips": fips,
@@ -129,6 +162,14 @@ def _normalize(raw: dict, year: int, fips: str, geo_type: str, state_fips: str) 
         "pct_owner_occupied": _pct(raw["B25003_002E"], raw["B25003_001E"]),
         "pct_poverty": _pct(raw["B17001_002E"], raw["B17001_001E"]),
         "unemployment_rate": _pct(raw["B23025_005E"], raw["B23025_002E"]),
+        "pct_health_insured": _pct(raw["C27001_002E"], raw["C27001_001E"]),
+        "mean_commute_minutes": _mean_commute(
+            raw["B08136_001E"], raw["B08301_001E"], raw["B08301_021E"]
+        ),
+        "pct_white": _pct(raw["B02001_002E"], raw["B02001_001E"]),
+        "pct_black": _pct(raw["B02001_003E"], raw["B02001_001E"]),
+        "pct_hispanic": _pct(raw["B03003_003E"], raw["B03003_001E"]),
+        "pct_asian": _pct(raw["B02001_005E"], raw["B02001_001E"]),
     }
     return geo, estimate
 
@@ -173,21 +214,30 @@ def load(geos: list[dict], estimates: list[dict]) -> None:
                     INSERT INTO census_acs5
                         (fips, year, population, median_income, pct_bachelors,
                          median_home_value, pct_owner_occupied, pct_poverty,
-                         unemployment_rate)
+                         unemployment_rate, pct_health_insured, mean_commute_minutes,
+                         pct_white, pct_black, pct_hispanic, pct_asian)
                     VALUES
                         (%(fips)s, %(year)s, %(population)s, %(median_income)s,
                          %(pct_bachelors)s, %(median_home_value)s,
                          %(pct_owner_occupied)s, %(pct_poverty)s,
-                         %(unemployment_rate)s)
+                         %(unemployment_rate)s, %(pct_health_insured)s,
+                         %(mean_commute_minutes)s,
+                         %(pct_white)s, %(pct_black)s, %(pct_hispanic)s, %(pct_asian)s)
                     ON CONFLICT (fips, year) DO UPDATE SET
-                        population         = EXCLUDED.population,
-                        median_income      = EXCLUDED.median_income,
-                        pct_bachelors      = EXCLUDED.pct_bachelors,
-                        median_home_value  = EXCLUDED.median_home_value,
-                        pct_owner_occupied = EXCLUDED.pct_owner_occupied,
-                        pct_poverty        = EXCLUDED.pct_poverty,
-                        unemployment_rate  = EXCLUDED.unemployment_rate,
-                        fetched_at         = NOW()
+                        population           = EXCLUDED.population,
+                        median_income        = EXCLUDED.median_income,
+                        pct_bachelors        = EXCLUDED.pct_bachelors,
+                        median_home_value    = EXCLUDED.median_home_value,
+                        pct_owner_occupied   = EXCLUDED.pct_owner_occupied,
+                        pct_poverty          = EXCLUDED.pct_poverty,
+                        unemployment_rate    = EXCLUDED.unemployment_rate,
+                        pct_health_insured   = EXCLUDED.pct_health_insured,
+                        mean_commute_minutes = EXCLUDED.mean_commute_minutes,
+                        pct_white            = EXCLUDED.pct_white,
+                        pct_black            = EXCLUDED.pct_black,
+                        pct_hispanic         = EXCLUDED.pct_hispanic,
+                        pct_asian            = EXCLUDED.pct_asian,
+                        fetched_at           = NOW()
                     """,
                     estimates,
                     page_size=500,

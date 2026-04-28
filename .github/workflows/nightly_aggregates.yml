@@ -1,0 +1,54 @@
+name: Nightly Aggregates
+
+on:
+  schedule:
+    - cron: "0 6 * * *"   # 06:00 UTC = midnight PT / 2am ET
+  workflow_dispatch:        # allow manual trigger
+
+jobs:
+  compute:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_DB: datamart
+          POSTGRES_USER: datamart
+          POSTGRES_PASSWORD: ${{ secrets.DB_PASSWORD }}
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DB_HOST: localhost
+      DB_PORT: 5432
+      DB_NAME: datamart
+      DB_USER: datamart
+      DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+      CENSUS_API_KEY: ${{ secrets.CENSUS_API_KEY }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Apply schema migrations
+        run: psql "postgresql://$DB_USER:$DB_PASSWORD@$DB_HOST:$DB_PORT/$DB_NAME" -f schema/schema.sql
+
+      - name: Compute aggregates
+        run: python ingestion/compute_aggregates.py
+
+      - name: Compute data quality
+        run: python ingestion/compute_data_quality.py

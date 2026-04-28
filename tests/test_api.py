@@ -1,8 +1,11 @@
+import json
+
 from django.test import TestCase
 from django.db import connection
 from census.models import (
+    Dataset,
     GeoEntity, CensusAcs5, AggNationalSummary, AggStateSummary, AggRanking, AggYoY,
-    CdcPlaces, BlsLaus, UsdaFoodEnv, CountyProfile,
+    CdcPlaces, BlsLaus, UsdaFoodEnv, EpaAqi, FbiCrime, CountyProfile,
 )
 
 
@@ -123,6 +126,46 @@ class GeoAPITest(TestCase):
         data = resp.json()
         self.assertIn("count", data)
         self.assertIn("results", data)
+
+    # --- range filters ---
+
+    def test_estimates_range_filter_gte(self):
+        # Only CA 2022 has median_income >= 85000
+        resp = self.client.get("/api/estimates/?median_income__gte=85000")
+        data = resp.json()
+        self.assertEqual(data["count"], 1)
+        self.assertEqual(int(data["results"][0]["median_income"]), 91905)
+
+    def test_estimates_range_filter_lte(self):
+        # Only TX 2022 has median_income <= 65000
+        resp = self.client.get("/api/estimates/?median_income__lte=65000")
+        data = resp.json()
+        self.assertEqual(data["count"], 1)
+        self.assertEqual(data["results"][0]["fips"], "48")
+
+    def test_estimates_range_filter_combined(self):
+        # CA 2021 (80000) and LA county 2022 (75000) are in [75000, 80000]
+        resp = self.client.get("/api/estimates/?median_income__gte=75000&median_income__lte=80000")
+        data = resp.json()
+        self.assertEqual(data["count"], 2)
+        fips_set = {r["fips"] for r in data["results"]}
+        self.assertEqual(fips_set, {"06", "06037"})
+
+    def test_estimates_range_filter_combines_with_year(self):
+        # median_income__gte=70000 AND year=2022 → CA 2022 (91905) + LA 2022 (75000)
+        resp = self.client.get("/api/estimates/?year=2022&median_income__gte=70000")
+        data = resp.json()
+        self.assertEqual(data["count"], 2)
+
+    def test_estimates_range_filter_invalid_value_returns_400(self):
+        resp = self.client.get("/api/estimates/?median_income__gte=notanumber")
+        self.assertEqual(resp.status_code, 400)
+
+    def test_estimates_range_filter_unknown_field_ignored(self):
+        # Unrecognized field names are silently ignored (not a security issue — only
+        # whitelisted metrics are ever applied)
+        resp = self.client.get("/api/estimates/?bogus_field__gte=100")
+        self.assertEqual(resp.status_code, 200)
 
     # --- validation ---
 
@@ -319,6 +362,7 @@ class DashboardTest(TestCase):
     @classmethod
     def setUpClass(cls):
         with connection.schema_editor() as editor:
+            editor.create_model(Dataset)
             editor.create_model(GeoEntity)
             editor.create_model(AggNationalSummary)
             editor.create_model(AggStateSummary)
@@ -337,9 +381,19 @@ class DashboardTest(TestCase):
             editor.delete_model(UsdaFoodEnv)
             editor.delete_model(CdcPlaces)
             editor.delete_model(GeoEntity)
+            editor.delete_model(Dataset)
 
     @classmethod
     def setUpTestData(cls):
+        Dataset.objects.create(
+            source_key="census_acs5", name="Census ACS5",
+            row_count=16400, null_rates={"median_income": 0.02, "population": 0.0},
+            last_ingested_at="2026-04-01T00:00:00Z",
+        )
+        Dataset.objects.create(
+            source_key="cdc_places", name="CDC PLACES",
+            row_count=3200, null_rates=None, last_ingested_at=None,
+        )
         GeoEntity.objects.create(fips="06", geo_type="state", name="California", state_fips="06")
         AggNationalSummary.objects.create(year=2022, total_population=332000000, avg_median_income=67000)
         AggStateSummary.objects.create(state_fips="06", year=2022, avg_median_income=80000)
@@ -428,6 +482,104 @@ class DashboardTest(TestCase):
         resp = self.client.get("/dashboard/")
         self.assertIn(b"Census ACS5", resp.content)
         self.assertIn(b"CDC PLACES", resp.content)
+
+    def test_metric_select_has_usda_optgroup(self):
+        resp = self.client.get("/dashboard/")
+        self.assertIn(b"USDA Atlas", resp.content)
+
+    # --- state_health aggregate (health-food-ranking feature) ---
+
+    def test_state_health_aggregates_by_state(self):
+        resp = self.client.get("/dashboard/")
+        health = json.loads(resp.context["state_health_json"])
+        self.assertEqual(len(health), 1)
+        self.assertEqual(health[0]["state_fips"], "06")
+
+    def test_state_health_aggregate_values(self):
+        resp = self.client.get("/dashboard/")
+        r = json.loads(resp.context["state_health_json"])[0]
+        self.assertAlmostEqual(float(r["avg_pct_obesity"]), 36.5)
+        self.assertAlmostEqual(float(r["avg_pct_diabetes"]), 10.2)
+
+    def test_state_health_has_all_metric_fields(self):
+        resp = self.client.get("/dashboard/")
+        r = json.loads(resp.context["state_health_json"])[0]
+        for field in [
+            "avg_pct_obesity", "avg_pct_diabetes", "avg_pct_smoking",
+            "avg_pct_hypertension", "avg_pct_depression",
+            "avg_pct_no_lpa", "avg_pct_poor_mental_health",
+        ]:
+            self.assertIn(field, r)
+
+    # --- state_food aggregate (health-food-ranking feature) ---
+
+    def test_state_food_aggregates_by_state(self):
+        resp = self.client.get("/dashboard/")
+        food = json.loads(resp.context["state_food_json"])
+        self.assertEqual(len(food), 1)
+        self.assertEqual(food[0]["state_fips"], "06")
+
+    def test_state_food_aggregate_values(self):
+        resp = self.client.get("/dashboard/")
+        r = json.loads(resp.context["state_food_json"])[0]
+        self.assertAlmostEqual(float(r["avg_pct_low_food_access"]), 12.5)
+        self.assertAlmostEqual(float(r["avg_fast_food_per_1000"]), 2.1)
+
+    def test_state_food_has_all_metric_fields(self):
+        resp = self.client.get("/dashboard/")
+        r = json.loads(resp.context["state_food_json"])[0]
+        for field in [
+            "avg_pct_low_food_access", "avg_groceries_per_1000",
+            "avg_fast_food_per_1000", "avg_pct_snap", "avg_farmers_markets",
+        ]:
+            self.assertIn(field, r)
+
+    def test_state_food_sentinel_excludes_null(self):
+        # A county with null pct_low_food_access should not affect the state average
+        UsdaFoodEnv.objects.create(
+            fips="06001", data_year=2018,
+            pct_low_food_access=None, groceries_per_1000="0.50",
+            fast_food_per_1000="1.0", pct_snap="10.0", farmers_markets=5,
+        )
+        resp = self.client.get("/dashboard/")
+        r = json.loads(resp.context["state_food_json"])[0]
+        self.assertAlmostEqual(float(r["avg_pct_low_food_access"]), 12.5)
+
+    # --- Dataset catalog panel ---
+
+    def test_dashboard_embeds_datasets_json(self):
+        resp = self.client.get("/dashboard/")
+        self.assertIn(b"catalogDatasets", resp.content)
+        self.assertIn(b"census_acs5", resp.content)
+
+    def test_dashboard_has_catalog_table(self):
+        resp = self.client.get("/dashboard/")
+        self.assertIn(b"catalogTable", resp.content)
+        self.assertIn(b"catalogBody", resp.content)
+
+    def test_dashboard_datasets_json_has_two_rows(self):
+        resp = self.client.get("/dashboard/")
+        datasets = json.loads(resp.context["datasets_json"])
+        self.assertEqual(len(datasets), 2)
+
+    def test_dashboard_datasets_json_includes_row_count(self):
+        resp = self.client.get("/dashboard/")
+        datasets = json.loads(resp.context["datasets_json"])
+        acs5 = next(d for d in datasets if d["source_key"] == "census_acs5")
+        self.assertEqual(acs5["row_count"], 16400)
+
+    def test_dashboard_datasets_json_includes_null_rates(self):
+        resp = self.client.get("/dashboard/")
+        datasets = json.loads(resp.context["datasets_json"])
+        acs5 = next(d for d in datasets if d["source_key"] == "census_acs5")
+        self.assertAlmostEqual(acs5["null_rates"]["median_income"], 0.02)
+
+    def test_dashboard_datasets_json_handles_no_ingestion(self):
+        resp = self.client.get("/dashboard/")
+        datasets = json.loads(resp.context["datasets_json"])
+        places = next(d for d in datasets if d["source_key"] == "cdc_places")
+        self.assertIsNone(places["last_ingested_at"])
+        self.assertIsNone(places["null_rates"])
 
 
 class ExternalSourceAPITest(TestCase):
@@ -604,6 +756,8 @@ class CountyProfileAPITest(TestCase):
             census_year=2022, population=10000000, median_income=75000,
             pct_bachelors="35.5", median_home_value=750000, pct_owner_occupied="48.0",
             pct_poverty="14.2", census_unemployment_rate="5.5",
+            pct_health_insured="91.2", mean_commute_minutes="28.5",
+            pct_white="28.0", pct_black="9.0", pct_hispanic="49.0", pct_asian="12.0",
             places_year=2022, pct_obesity="36.5", pct_diabetes="10.2",
             pct_smoking="12.0", pct_hypertension="38.1", pct_depression="22.4",
             pct_no_lpa="30.1", pct_poor_mental_health="15.6",
@@ -611,12 +765,19 @@ class CountyProfileAPITest(TestCase):
             unemployed=250000, bls_unemployment_rate="5.0",
             usda_year=2018, pct_low_food_access="12.5", groceries_per_1000="0.42",
             fast_food_per_1000="2.10", pct_snap="14.2", farmers_markets=45,
+            aqi_year=2022, median_aqi="42.0", max_aqi=112, good_days=180,
+            moderate_days=120, unhealthy_sensitive_days=50, unhealthy_days=10,
+            very_unhealthy_days=3, hazardous_days=0, pm25_days=85, ozone_days=95,
+            crime_year=2022, violent_crimes=15234, violent_crime_rate="450.1",
+            property_crimes=89023, property_crime_rate="2630.5",
         )
         CountyProfile.objects.create(
             fips="48201", county_name="Harris County, Texas", state_fips="48",
             census_year=2022, population=4700000, median_income=62000,
             pct_bachelors="32.0", median_home_value=280000, pct_owner_occupied="55.0",
             pct_poverty="15.0", census_unemployment_rate="4.8",
+            pct_health_insured="82.5", mean_commute_minutes="30.2",
+            pct_white="33.0", pct_black="19.0", pct_hispanic="41.0", pct_asian="7.0",
             places_year=2022, pct_obesity="38.0", pct_diabetes="11.5",
             pct_smoking="14.0", pct_hypertension="40.0", pct_depression="24.0",
             pct_no_lpa="32.0", pct_poor_mental_health="16.0",
@@ -624,6 +785,11 @@ class CountyProfileAPITest(TestCase):
             unemployed=125000, bls_unemployment_rate="5.0",
             usda_year=2018, pct_low_food_access="8.3", groceries_per_1000="0.31",
             fast_food_per_1000="2.50", pct_snap="12.0", farmers_markets=20,
+            aqi_year=2022, median_aqi="55.0", max_aqi=145, good_days=150,
+            moderate_days=140, unhealthy_sensitive_days=55, unhealthy_days=15,
+            very_unhealthy_days=5, hazardous_days=1, pm25_days=100, ozone_days=80,
+            crime_year=2022, violent_crimes=23456, violent_crime_rate="620.8",
+            property_crimes=145678, property_crime_rate="3860.2",
         )
 
     def test_profile_returns_all(self):
@@ -649,7 +815,9 @@ class CountyProfileAPITest(TestCase):
         resp = self.client.get("/api/profile/?fips=06037")
         r = resp.json()["results"][0]
         # Census
-        for f in ["census_year", "population", "median_income", "pct_poverty"]:
+        for f in ["census_year", "population", "median_income", "pct_poverty",
+                   "pct_health_insured", "mean_commute_minutes",
+                   "pct_white", "pct_black", "pct_hispanic", "pct_asian"]:
             self.assertIn(f, r)
         # CDC PLACES
         for f in ["places_year", "pct_obesity", "pct_diabetes"]:
@@ -659,6 +827,12 @@ class CountyProfileAPITest(TestCase):
             self.assertIn(f, r)
         # USDA
         for f in ["usda_year", "pct_low_food_access", "pct_snap", "farmers_markets"]:
+            self.assertIn(f, r)
+        # EPA AQI
+        for f in ["aqi_year", "median_aqi", "max_aqi", "good_days", "pm25_days", "ozone_days"]:
+            self.assertIn(f, r)
+        # FBI Crime
+        for f in ["crime_year", "violent_crime_rate", "property_crime_rate"]:
             self.assertIn(f, r)
 
     def test_profile_census_and_health_values(self):
@@ -672,3 +846,224 @@ class CountyProfileAPITest(TestCase):
         data = resp.json()
         self.assertIn("count", data)
         self.assertIn("results", data)
+
+
+class EpaAqiAPITest(TestCase):
+    """Tests for /api/aqi/."""
+
+    @classmethod
+    def setUpClass(cls):
+        with connection.schema_editor() as editor:
+            editor.create_model(GeoEntity)
+            editor.create_model(EpaAqi)
+        super().setUpClass()
+
+    @classmethod
+    def tearDownClass(cls):
+        super().tearDownClass()
+        with connection.schema_editor() as editor:
+            editor.delete_model(EpaAqi)
+            editor.delete_model(GeoEntity)
+
+    @classmethod
+    def setUpTestData(cls):
+        GeoEntity.objects.create(fips="06037", geo_type="county",
+                                 name="Los Angeles County, California", state_fips="06")
+        GeoEntity.objects.create(fips="48201", geo_type="county",
+                                 name="Harris County, Texas", state_fips="48")
+        EpaAqi.objects.create(
+            fips="06037", year=2022, days_with_aqi=363, good_days=180,
+            moderate_days=120, unhealthy_sensitive_days=50, unhealthy_days=10,
+            very_unhealthy_days=3, hazardous_days=0, max_aqi=112, median_aqi="42.0",
+            pm25_days=85, ozone_days=95,
+        )
+        EpaAqi.objects.create(
+            fips="48201", year=2022, days_with_aqi=355, good_days=150,
+            moderate_days=140, unhealthy_sensitive_days=55, unhealthy_days=15,
+            very_unhealthy_days=5, hazardous_days=1, max_aqi=145, median_aqi="55.0",
+            pm25_days=100, ozone_days=80,
+        )
+
+    def test_aqi_returns_all(self):
+        resp = self.client.get("/api/aqi/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()["count"], 2)
+
+    def test_aqi_filter_fips(self):
+        resp = self.client.get("/api/aqi/?fips=06037")
+        data = resp.json()
+        self.assertEqual(data["count"], 1)
+        self.assertEqual(data["results"][0]["fips"], "06037")
+
+    def test_aqi_filter_state_fips(self):
+        resp = self.client.get("/api/aqi/?state_fips=48")
+        data = resp.json()
+        self.assertEqual(data["count"], 1)
+        self.assertEqual(data["results"][0]["fips"], "48201")
+
+    def test_aqi_filter_year(self):
+        resp = self.client.get("/api/aqi/?year=2022")
+        self.assertEqual(resp.json()["count"], 2)
+
+    def test_aqi_fields(self):
+        resp = self.client.get("/api/aqi/?fips=06037")
+        r = resp.json()["results"][0]
+        for field in ["median_aqi", "max_aqi", "good_days", "moderate_days",
+                      "unhealthy_sensitive_days", "unhealthy_days", "very_unhealthy_days",
+                      "hazardous_days", "pm25_days", "ozone_days"]:
+            self.assertIn(field, r)
+
+    def test_aqi_values(self):
+        resp = self.client.get("/api/aqi/?fips=06037")
+        r = resp.json()["results"][0]
+        self.assertEqual(r["median_aqi"], "42.0")
+        self.assertEqual(r["max_aqi"], 112)
+        self.assertEqual(r["good_days"], 180)
+
+    def test_aqi_invalid_year_returns_400(self):
+        resp = self.client.get("/api/aqi/?year=abc")
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn("year", resp.json())
+
+
+class FbiCrimeAPITest(TestCase):
+    """Tests for /api/crime/."""
+
+    @classmethod
+    def setUpClass(cls):
+        with connection.schema_editor() as editor:
+            editor.create_model(GeoEntity)
+            editor.create_model(FbiCrime)
+        super().setUpClass()
+
+    @classmethod
+    def tearDownClass(cls):
+        super().tearDownClass()
+        with connection.schema_editor() as editor:
+            editor.delete_model(FbiCrime)
+            editor.delete_model(GeoEntity)
+
+    @classmethod
+    def setUpTestData(cls):
+        GeoEntity.objects.create(fips="06037", geo_type="county",
+                                 name="Los Angeles County, California", state_fips="06")
+        GeoEntity.objects.create(fips="48201", geo_type="county",
+                                 name="Harris County, Texas", state_fips="48")
+        FbiCrime.objects.create(
+            fips="06037", year=2022, population_covered=10014009,
+            violent_crimes=15234, violent_crime_rate="450.1",
+            property_crimes=89023, property_crime_rate="2630.5",
+        )
+        FbiCrime.objects.create(
+            fips="48201", year=2022, population_covered=4731145,
+            violent_crimes=23456, violent_crime_rate="620.8",
+            property_crimes=145678, property_crime_rate="3860.2",
+        )
+
+    def test_crime_returns_all(self):
+        resp = self.client.get("/api/crime/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()["count"], 2)
+
+    def test_crime_filter_fips(self):
+        resp = self.client.get("/api/crime/?fips=06037")
+        data = resp.json()
+        self.assertEqual(data["count"], 1)
+        self.assertEqual(data["results"][0]["fips"], "06037")
+
+    def test_crime_filter_state_fips(self):
+        resp = self.client.get("/api/crime/?state_fips=48")
+        data = resp.json()
+        self.assertEqual(data["count"], 1)
+        self.assertEqual(data["results"][0]["fips"], "48201")
+
+    def test_crime_filter_year(self):
+        resp = self.client.get("/api/crime/?year=2022")
+        self.assertEqual(resp.json()["count"], 2)
+
+    def test_crime_fields(self):
+        resp = self.client.get("/api/crime/?fips=06037")
+        r = resp.json()["results"][0]
+        for field in ["violent_crimes", "violent_crime_rate",
+                      "property_crimes", "property_crime_rate", "population_covered"]:
+            self.assertIn(field, r)
+
+    def test_crime_values(self):
+        resp = self.client.get("/api/crime/?fips=06037")
+        r = resp.json()["results"][0]
+        self.assertEqual(r["violent_crimes"], 15234)
+        self.assertEqual(r["violent_crime_rate"], "450.1")
+
+    def test_crime_invalid_year_returns_400(self):
+        resp = self.client.get("/api/crime/?year=notanumber")
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn("year", resp.json())
+
+
+class DatasetCatalogAPITest(TestCase):
+    """Tests for /api/datasets/."""
+
+    @classmethod
+    def setUpClass(cls):
+        with connection.schema_editor() as editor:
+            editor.create_model(Dataset)
+        super().setUpClass()
+
+    @classmethod
+    def tearDownClass(cls):
+        super().tearDownClass()
+        with connection.schema_editor() as editor:
+            editor.delete_model(Dataset)
+
+    @classmethod
+    def setUpTestData(cls):
+        Dataset.objects.create(
+            source_key="census_acs5",
+            name="Census ACS 5-Year Estimates",
+            description="Population, income, education.",
+            source_url="https://api.census.gov/",
+            entity_type="county",
+            update_cadence="annual",
+            row_count=16400,
+            null_rates={"median_income": 0.02},
+        )
+        Dataset.objects.create(
+            source_key="cdc_places",
+            name="CDC PLACES",
+            description="County health outcomes.",
+            source_url="https://data.cdc.gov/",
+            entity_type="county",
+            update_cadence="annual",
+            row_count=2956,
+            null_rates=None,
+        )
+
+    def test_catalog_returns_200(self):
+        resp = self.client.get("/api/datasets/")
+        self.assertEqual(resp.status_code, 200)
+
+    def test_catalog_returns_all_sources(self):
+        resp = self.client.get("/api/datasets/")
+        self.assertEqual(resp.json()["count"], 2)
+
+    def test_catalog_fields(self):
+        resp = self.client.get("/api/datasets/")
+        r = resp.json()["results"][0]
+        for field in ["source_key", "name", "description", "source_url",
+                      "entity_type", "update_cadence", "row_count", "null_rates"]:
+            self.assertIn(field, r)
+
+    def test_catalog_has_row_count(self):
+        resp = self.client.get("/api/datasets/")
+        results = {r["source_key"]: r for r in resp.json()["results"]}
+        self.assertEqual(results["census_acs5"]["row_count"], 16400)
+
+    def test_catalog_has_null_rates(self):
+        resp = self.client.get("/api/datasets/")
+        results = {r["source_key"]: r for r in resp.json()["results"]}
+        self.assertEqual(results["census_acs5"]["null_rates"], {"median_income": 0.02})
+
+    def test_null_rates_null_when_uncomputed(self):
+        resp = self.client.get("/api/datasets/")
+        results = {r["source_key"]: r for r in resp.json()["results"]}
+        self.assertIsNone(results["cdc_places"]["null_rates"])

@@ -1,8 +1,19 @@
 from rest_framework import serializers
 from .models import (
+    Dataset,
     GeoEntity, CensusAcs5, AggNationalSummary, AggStateSummary, AggRanking, AggYoY,
-    CdcPlaces, BlsLaus, UsdaFoodEnv, CountyProfile,
+    CdcPlaces, BlsLaus, UsdaFoodEnv, EpaAqi, FbiCrime, CountyProfile,
 )
+
+
+class DatasetSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Dataset
+        fields = [
+            "source_key", "name", "description", "source_url",
+            "entity_type", "update_cadence",
+            "row_count", "null_rates", "last_ingested_at", "quality_computed_at",
+        ]
 
 
 class EstimateSerializer(serializers.ModelSerializer):
@@ -17,6 +28,12 @@ class EstimateSerializer(serializers.ModelSerializer):
             "pct_owner_occupied",
             "pct_poverty",
             "unemployment_rate",
+            "pct_health_insured",
+            "mean_commute_minutes",
+            "pct_white",
+            "pct_black",
+            "pct_hispanic",
+            "pct_asian",
             "fetched_at",
         ]
 
@@ -96,6 +113,12 @@ class EstimateWithGeoSerializer(serializers.ModelSerializer):
             "pct_owner_occupied",
             "pct_poverty",
             "unemployment_rate",
+            "pct_health_insured",
+            "mean_commute_minutes",
+            "pct_white",
+            "pct_black",
+            "pct_hispanic",
+            "pct_asian",
             "fetched_at",
         ]
 
@@ -132,6 +155,30 @@ class UsdaFoodEnvSerializer(serializers.ModelSerializer):
         ]
 
 
+class EpaAqiSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = EpaAqi
+        fields = [
+            "fips", "year",
+            "days_with_aqi", "good_days", "moderate_days",
+            "unhealthy_sensitive_days", "unhealthy_days", "very_unhealthy_days",
+            "hazardous_days", "max_aqi", "median_aqi", "pm25_days", "ozone_days",
+            "fetched_at",
+        ]
+
+
+class FbiCrimeSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = FbiCrime
+        fields = [
+            "fips", "year",
+            "population_covered",
+            "violent_crimes", "violent_crime_rate",
+            "property_crimes", "property_crime_rate",
+            "fetched_at",
+        ]
+
+
 class CountyProfileSerializer(serializers.ModelSerializer):
     class Meta:
         model = CountyProfile
@@ -140,9 +187,16 @@ class CountyProfileSerializer(serializers.ModelSerializer):
             "census_year", "population", "median_income", "pct_bachelors",
             "median_home_value", "pct_owner_occupied", "pct_poverty",
             "census_unemployment_rate",
+            "pct_health_insured", "mean_commute_minutes",
+            "pct_white", "pct_black", "pct_hispanic", "pct_asian",
             "places_year", "pct_obesity", "pct_diabetes", "pct_smoking",
             "pct_hypertension", "pct_depression", "pct_no_lpa", "pct_poor_mental_health",
             "bls_year", "labor_force", "employed", "unemployed", "bls_unemployment_rate",
             "usda_year", "pct_low_food_access", "groceries_per_1000", "fast_food_per_1000",
             "pct_snap", "farmers_markets",
+            "aqi_year", "median_aqi", "max_aqi", "good_days", "moderate_days",
+            "unhealthy_sensitive_days", "unhealthy_days", "very_unhealthy_days",
+            "hazardous_days", "pm25_days", "ozone_days",
+            "crime_year", "violent_crimes", "violent_crime_rate",
+            "property_crimes", "property_crime_rate",
         ]

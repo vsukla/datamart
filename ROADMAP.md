@@ -28,16 +28,16 @@ Core architecture, Census data, first external sources, dashboard.
 
 ---
 
-## Phase 2 — Geographic Expansion 🔜
+## Phase 2 — Geographic Expansion ✅
 
-Add 6–8 more county/state datasets. Same architecture, wider profile.
+Added 2 new county/state datasets, range filters, automation, and bug fixes.
 
 ### 2a — Environment & Safety
 
 | Item | Status | Notes |
 |---|---|---|
-| EPA Air Quality Index — `/api/air/` | 🔜 | EPA AQS API; county AQI, PM2.5, ozone |
-| FBI Crime Data — `/api/crime/` | 🔜 | Crime Data Explorer API; violent + property rates |
+| EPA Air Quality Index — `/api/aqi/` | ✅ | ZIP+CSV per year; 11 AQI metrics; FIPS matched by normalized county name |
+| FBI Crime Data — `/api/crime/` | ✅ | ZIP+CSV per year; agency rows aggregated to county; violent + property rates |
 | NHTSA Traffic Fatalities — `/api/traffic/` | ⬜ | FARS dataset; fatalities per 100k pop |
 
 ### 2b — Housing & Economy
@@ -60,31 +60,34 @@ Add 6–8 more county/state datasets. Same architecture, wider profile.
 |---|---|---|
 | Dept of Education graduation rates — `/api/education/` | ⬜ | State-level; district-to-county crosswalk |
 
-### 2e — Dashboard
+### 2e — Bug Fixes, Filters & Tests
 
 | Item | Status | Notes |
 |---|---|---|
-| EPA air quality panel (county drill-down) | ⬜ | After 2a |
-| Crime + safety panel (county drill-down) | ⬜ | After 2a |
-| Scheduled daily `compute_aggregates.py` via GitHub Actions | ⬜ | Issue #18 |
-| Range filters on `/api/estimates/` (e.g. `pct_poverty__gte=20`) | ⬜ | Issue #14 |
-| Tests for scatter/table/health-food-ranking dashboard features | 🔜 | Issue #25 |
+| Fix `fast_food_per_1000` — was using full-service restaurant column | ✅ | Issue #24; corrected to `FFRPTH16` |
+| BLS LAUS: switch to flat-file download (no rate limit) | ✅ | Issue #23; now ~3,100 counties per year, no API key |
+| Range filters on `/api/estimates/` (e.g. `pct_poverty__gte=20`) | ✅ | Issue #14; 12 supported metrics |
+| Tests for cross-source dashboard features | ✅ | Issue #25; scatter, county table, health/food ranking |
+| EPA air quality + FBI crime fields in county profile | ✅ | Both sources in `county_profile` view + `/api/profile/` |
+| Scheduled nightly `compute_aggregates.py` via GitHub Actions | ✅ | Issue #18; see Phase 3 |
 
 ---
 
-## Phase 3 — Ingestion Platform ⬜
+## Phase 3 — Ingestion Platform ✅
 
 Infrastructure to make adding new datasets fast and reliable.
 
 | Item | Status | Notes |
 |---|---|---|
-| `datasets` catalog table + `/api/datasets/` endpoint | ⬜ | Name, source URL, entity type, update cadence |
-| Data quality tracking (null rates, row counts per dataset) | ⬜ | Stored in `datasets`; surfaced in catalog endpoint |
-| Common ingestion base class | ⬜ | Standardize fetch → validate → upsert → log |
+| `datasets` catalog table + `/api/datasets/` endpoint | ✅ | Name, source URL, entity type, update cadence; seeded with 6 sources |
+| Data quality tracking (null rates, row counts per dataset) | ✅ | `compute_data_quality.py`; stored in `datasets.null_rates` + `row_count` |
+| Common ingestion base class (`ingestion/base.py`) | ✅ | `BaseIngestion`: fetch → parse → upsert → mark_ingested; CLI built-in |
+| Dataset catalog panel in dashboard | ✅ | Row count, freshness badge, completeness progress bar per source |
+| GitHub Actions CI + nightly cron | ✅ | `ci.yml` (tests on push/PR); `nightly_aggregates.yml` (daily 06:00 UTC) |
+| Additional Census variables (health insurance, commute, race) | ✅ | Issue #15; migration 010; 6 new columns in `census_acs5` |
 | Ingestion failure alerting (GitHub issue or webhook) | ⬜ | |
-| Dataset catalog page in dashboard | ⬜ | Freshness, completeness, last update |
-| GitHub Actions cron per data source | ⬜ | Replaces manual script runs |
-| Additional Census variables (health insurance, commute, race) | ⬜ | Issue #15 |
+
+**291 tests** (up from 177 at Phase 1 close).
 
 ---
 
@@ -121,17 +124,17 @@ Extend beyond county/state. Each new entity type links back to FIPS.
 
 Issues tracked in GitHub: https://github.com/vsukla/datamart/issues
 
-| # | Title | Phase |
-|---|---|---|
-| #14 | Range filters on `/api/estimates/` | 2e |
-| #15 | Additional Census variables | 3 |
-| #16 | World Bank data source | 5 |
-| #17 | Token-based auth + rate limiting | 5 |
-| #18 | Schedule compute_aggregates.py via GitHub Actions | 2e |
-| #22 | Cross-source dynamic query API `/api/query/` | 5 |
-| #23 | BLS LAUS: switch to flat-file download (no rate limit) | 2 |
-| #24 | Fix `fast_food_per_1000` column — actually full-service restaurant data | data quality |
-| #25 | Tests for cross-source dashboard features | 2e |
+| # | Title | Phase | Status |
+|---|---|---|---|
+| #14 | Range filters on `/api/estimates/` | 2e | ✅ Closed |
+| #15 | Additional Census variables | 3 | ✅ Closed |
+| #16 | World Bank data source | 5 | ⬜ Open |
+| #17 | Token-based auth + rate limiting | 5 | ⬜ Open |
+| #18 | Schedule compute_aggregates.py via GitHub Actions | 3 | ✅ Closed |
+| #22 | Cross-source dynamic query API `/api/query/` | 5 | ⬜ Open |
+| #23 | BLS LAUS: switch to flat-file download | 2e | ✅ Closed |
+| #24 | Fix `fast_food_per_1000` column | data quality | ✅ Closed |
+| #25 | Tests for cross-source dashboard features | 2e | ✅ Closed |
 
 ---
 

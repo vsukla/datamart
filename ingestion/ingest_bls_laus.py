@@ -1,29 +1,24 @@
 """
 Ingests BLS Local Area Unemployment Statistics (LAUS) at county level.
 
-Source: BLS Public Data API v2
-URL:    https://api.bls.gov/publicAPI/v2/timeseries/data/
+Source: BLS LAUS county annual flat files
+URL pattern: https://www.bls.gov/lau/laucnty{YY}.txt  (2-digit year)
 
-Series IDs are constructed as: LAUCN{state_fips(2)}{county_fips(3)}0000000{type(2)}
-Series types:
-  03 = unemployment rate
-  04 = unemployed persons
-  05 = employed persons
-  06 = labor force
+File format (tab-delimited after header rows):
+  LAUS Code | State FIPS | County FIPS | Area Title | Year | Period |
+  Labor Force | Employed | Unemployed | Unemployment Rate
 
-Fetches annual averages (period M13) for the requested year range.
-Counties are batched 50 series per API request (BLS limit without a key;
-with a registered key the limit is 500 series and rate limits are higher).
+County data rows start with "CN" followed by digits. This covers all ~3,200
+counties in one download per year with no API rate limits.
 
 Usage:
-  python ingest_bls_laus.py [--start 2018] [--end 2022] [--api-key KEY]
+  python ingest_bls_laus.py [--start 2018] [--end 2023]
+  python ingest_bls_laus.py --file /path/to/laucnty23.txt --year 2023
 """
 
 import argparse
 import logging
 import os
-import time
-from collections import defaultdict
 
 import psycopg2
 import requests
@@ -38,58 +33,51 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-BLS_API_URL = "https://api.bls.gov/publicAPI/v2/timeseries/data/"
-SERIES_TYPES = {"003": "unemployment_rate", "004": "unemployed", "005": "employed", "006": "labor_force"}
-BATCH_SIZE_UNREGISTERED = 50
-BATCH_SIZE_REGISTERED = 500
+FLAT_FILE_URL_TPL = "https://www.bls.gov/lau/laucnty{yy:02d}.txt"
+
+# 0-based column indices in tab-delimited data rows
+_COL_STATE  = 1   # 2-digit state FIPS
+_COL_COUNTY = 2   # 3-digit county FIPS
+_COL_YEAR   = 4
+_COL_LF     = 6   # civilian labor force
+_COL_EMP    = 7   # employed
+_COL_UNEMP  = 8   # unemployed level
+_COL_RATE   = 9   # unemployment rate (%)
 
 
-def build_series_id(fips: str, series_type: str) -> str:
-    # Format: LAUCN + 5-digit FIPS + 0000000 + 3-digit series type
-    return f"LAUCN{fips}0000000{series_type}"
+def _num(s: str) -> str:
+    return s.strip().replace(",", "")
 
 
-def parse_fips_from_series(series_id: str) -> tuple[str, str]:
-    """Return (fips, series_type) from a LAUS series ID."""
-    # LAUCN(5) + fips(5) + 0000000(7) + type(3) = 20 chars
-    fips = series_id[5:10]
-    stype = series_id[-3:]
-    return fips, stype
+def parse_flat_file(content: bytes | str) -> dict[tuple[str, int], dict]:
+    """Parse a BLS LAUS county txt flat file into {(fips, year): {col: value}}."""
+    if isinstance(content, bytes):
+        text = content.decode("utf-8", errors="replace")
+    else:
+        text = content
 
-
-def fetch_batch(series_ids: list[str], start: int, end: int, api_key: str | None) -> dict:
-    payload = {
-        "seriesid": series_ids,
-        "startyear": str(start),
-        "endyear": str(end),
-        "annualaverage": True,
-    }
-    if api_key:
-        payload["registrationkey"] = api_key
-
-    resp = requests.post(BLS_API_URL, json=payload, timeout=60)
-    resp.raise_for_status()
-    return resp.json()
-
-
-def parse_bls_response(data: dict) -> dict[tuple[str, int], dict]:
-    """Returns {(fips, year): {col: value}}."""
-    records: dict[tuple[str, int], dict] = defaultdict(dict)
-    for series in data.get("Results", {}).get("series", []):
-        fips, stype = parse_fips_from_series(series["seriesID"])
-        col = SERIES_TYPES.get(stype)
-        if not col:
+    records: dict[tuple[str, int], dict] = {}
+    for line in text.splitlines():
+        if not line.startswith("CN"):
             continue
-        for obs in series.get("data", []):
-            if obs.get("period") != "M13":  # annual average only
-                continue
-            try:
-                year = int(obs["year"])
-                raw = obs["value"].replace(",", "")
-                value = float(raw) if col == "unemployment_rate" else int(float(raw))
-                records[(fips, year)][col] = value
-            except (KeyError, ValueError):
-                pass
+        parts = line.split("\t")
+        if len(parts) < 10:
+            continue
+        try:
+            fips = parts[_COL_STATE].strip().zfill(2) + parts[_COL_COUNTY].strip().zfill(3)
+            year = int(parts[_COL_YEAR].strip())
+            lf   = int(float(_num(parts[_COL_LF])))   if _num(parts[_COL_LF])   else None
+            emp  = int(float(_num(parts[_COL_EMP])))  if _num(parts[_COL_EMP])  else None
+            une  = int(float(_num(parts[_COL_UNEMP]))) if _num(parts[_COL_UNEMP]) else None
+            rate = float(_num(parts[_COL_RATE]))        if _num(parts[_COL_RATE])  else None
+        except (ValueError, IndexError):
+            continue
+        records[(fips, year)] = {
+            "labor_force":       lf,
+            "employed":          emp,
+            "unemployed":        une,
+            "unemployment_rate": rate,
+        }
     return records
 
 
@@ -111,12 +99,12 @@ def upsert(conn, records: dict[tuple[str, int], dict]) -> int:
     with conn.cursor() as cur:
         for (fips, year), data in records.items():
             row = {
-                "fips": fips,
-                "year": year,
-                "labor_force":       data.get("labor_force"),
-                "employed":          data.get("employed"),
-                "unemployed":        data.get("unemployed"),
-                "unemployment_rate": data.get("unemployment_rate"),
+                "fips":               fips,
+                "year":               year,
+                "labor_force":        data.get("labor_force"),
+                "employed":           data.get("employed"),
+                "unemployed":         data.get("unemployed"),
+                "unemployment_rate":  data.get("unemployment_rate"),
             }
             cur.execute(sql, row)
             count += cur.rowcount
@@ -124,48 +112,27 @@ def upsert(conn, records: dict[tuple[str, int], dict]) -> int:
     return count
 
 
-def ingest(conn, start: int, end: int, api_key: str | None = None) -> int:
-    with conn.cursor() as cur:
-        cur.execute("SELECT fips FROM geo_entities WHERE geo_type = 'county' ORDER BY fips")
-        county_fips = [r[0] for r in cur.fetchall()]
-
-    log.info("Building series IDs for %d counties...", len(county_fips))
-    all_series = [
-        build_series_id(fips, stype)
-        for fips in county_fips
-        for stype in SERIES_TYPES  # keys are "003", "004", "005", "006"
-    ]
-
-    batch_size = BATCH_SIZE_REGISTERED if api_key else BATCH_SIZE_UNREGISTERED
-    all_records: dict[tuple[str, int], dict] = defaultdict(dict)
-
-    for i in range(0, len(all_series), batch_size):
-        batch = all_series[i : i + batch_size]
-        log.info("Fetching batch %d/%d (%d series)...",
-                 i // batch_size + 1, (len(all_series) + batch_size - 1) // batch_size, len(batch))
-        try:
-            data = fetch_batch(batch, start, end, api_key)
-            if data.get("status") != "REQUEST_SUCCEEDED":
-                log.warning("BLS API status: %s — %s",
-                            data.get("status"), data.get("message", []))
-            parsed = parse_bls_response(data)
-            for key, vals in parsed.items():
-                all_records[key].update(vals)
-        except requests.RequestException as exc:
-            log.error("Batch %d failed: %s", i // batch_size + 1, exc)
-        time.sleep(1.0)
-
-    log.info("Parsed %d county×year records", len(all_records))
-    count = upsert(conn, all_records)
-    log.info("Upserted %d rows into bls_laus", count)
-    return count
+def ingest(conn, start: int, end: int) -> int:
+    total = 0
+    for year in range(start, end + 1):
+        url = FLAT_FILE_URL_TPL.format(yy=year % 100)
+        log.info("Downloading BLS LAUS flat file for %d: %s", year, url)
+        resp = requests.get(url, timeout=120)
+        resp.raise_for_status()
+        records = parse_flat_file(resp.content)
+        log.info("Parsed %d county records for %d", len(records), year)
+        count = upsert(conn, records)
+        log.info("Upserted %d rows for %d", count, year)
+        total += count
+    return total
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--start", type=int, default=2018)
-    parser.add_argument("--end",   type=int, default=2022)
-    parser.add_argument("--api-key", default=os.environ.get("BLS_API_KEY"))
+    parser.add_argument("--end",   type=int, default=2023)
+    parser.add_argument("--file",  help="Path to a local laucnty{YY}.txt file")
+    parser.add_argument("--year",  type=int, help="Year for --file mode (required with --file)")
     args = parser.parse_args()
 
     conn = psycopg2.connect(
@@ -176,7 +143,16 @@ if __name__ == "__main__":
         password=os.environ.get("DB_PASSWORD", ""),
     )
     try:
-        ingest(conn, args.start, args.end, args.api_key)
-        log.info("Done.")
+        if args.file:
+            if not args.year:
+                parser.error("--year is required with --file")
+            with open(args.file, "rb") as fh:
+                records = parse_flat_file(fh.read())
+            log.info("Parsed %d county records from %s", len(records), args.file)
+            count = upsert(conn, records)
+            log.info("Upserted %d rows. Done.", count)
+        else:
+            ingest(conn, args.start, args.end)
+            log.info("Done.")
     finally:
         conn.close()

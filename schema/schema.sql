@@ -2,13 +2,28 @@
 -- Apply this to a fresh database for a clean install.
 -- For incremental changes to an existing database use migrations/migrate.sh instead.
 --
--- Last updated: migration 006
+-- Last updated: migration 010
 
 BEGIN;
 
 -- ---------------------------------------------------------------------------
 -- Migration tracking
 -- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS datasets (
+    id                   SERIAL       PRIMARY KEY,
+    source_key           VARCHAR(30)  NOT NULL UNIQUE,
+    name                 VARCHAR(100) NOT NULL,
+    description          TEXT,
+    source_url           TEXT,
+    entity_type          VARCHAR(20)  NOT NULL DEFAULT 'county',
+    update_cadence       VARCHAR(20),
+    row_count            INTEGER,
+    null_rates           JSONB,
+    last_ingested_at     TIMESTAMPTZ,
+    quality_computed_at  TIMESTAMPTZ,
+    created_at           TIMESTAMPTZ  DEFAULT NOW()
+);
 
 CREATE TABLE IF NOT EXISTS schema_migrations (
     version     INTEGER     PRIMARY KEY,
@@ -40,8 +55,14 @@ CREATE TABLE IF NOT EXISTS census_acs5 (
     median_home_value   INTEGER,
     pct_owner_occupied  NUMERIC(5, 2),
     pct_poverty         NUMERIC(5, 2),
-    unemployment_rate   NUMERIC(5, 2),
-    fetched_at          TIMESTAMPTZ  DEFAULT NOW(),
+    unemployment_rate    NUMERIC(5, 2),
+    pct_health_insured   NUMERIC(5, 2),
+    mean_commute_minutes NUMERIC(5, 1),
+    pct_white            NUMERIC(5, 2),
+    pct_black            NUMERIC(5, 2),
+    pct_hispanic         NUMERIC(5, 2),
+    pct_asian            NUMERIC(5, 2),
+    fetched_at           TIMESTAMPTZ  DEFAULT NOW(),
     UNIQUE (fips, year)
 );
 
@@ -175,6 +196,44 @@ CREATE TABLE IF NOT EXISTS usda_food_env (
 
 CREATE INDEX IF NOT EXISTS idx_usda_food_env_fips ON usda_food_env (fips);
 
+CREATE TABLE IF NOT EXISTS epa_aqi (
+    id                       SERIAL       PRIMARY KEY,
+    fips                     VARCHAR(5)   NOT NULL REFERENCES geo_entities(fips),
+    year                     SMALLINT     NOT NULL,
+    days_with_aqi            SMALLINT,
+    good_days                SMALLINT,
+    moderate_days            SMALLINT,
+    unhealthy_sensitive_days SMALLINT,
+    unhealthy_days           SMALLINT,
+    very_unhealthy_days      SMALLINT,
+    hazardous_days           SMALLINT,
+    max_aqi                  SMALLINT,
+    median_aqi               NUMERIC(6, 1),
+    pm25_days                SMALLINT,
+    ozone_days               SMALLINT,
+    fetched_at               TIMESTAMPTZ  DEFAULT NOW(),
+    UNIQUE (fips, year)
+);
+
+CREATE INDEX IF NOT EXISTS idx_epa_aqi_fips ON epa_aqi (fips);
+CREATE INDEX IF NOT EXISTS idx_epa_aqi_year ON epa_aqi (year);
+
+CREATE TABLE IF NOT EXISTS fbi_crime (
+    id                   SERIAL       PRIMARY KEY,
+    fips                 VARCHAR(5)   NOT NULL REFERENCES geo_entities(fips),
+    year                 SMALLINT     NOT NULL,
+    population_covered   INTEGER,
+    violent_crimes       INTEGER,
+    violent_crime_rate   NUMERIC(8, 1),
+    property_crimes      INTEGER,
+    property_crime_rate  NUMERIC(8, 1),
+    fetched_at           TIMESTAMPTZ  DEFAULT NOW(),
+    UNIQUE (fips, year)
+);
+
+CREATE INDEX IF NOT EXISTS idx_fbi_crime_fips ON fbi_crime (fips);
+CREATE INDEX IF NOT EXISTS idx_fbi_crime_year ON fbi_crime (year);
+
 -- ---------------------------------------------------------------------------
 -- Cross-source county profile view
 -- ---------------------------------------------------------------------------
@@ -192,7 +251,13 @@ SELECT
     c.median_home_value,
     c.pct_owner_occupied,
     c.pct_poverty,
-    c.unemployment_rate AS census_unemployment_rate,
+    c.unemployment_rate  AS census_unemployment_rate,
+    c.pct_health_insured,
+    c.mean_commute_minutes,
+    c.pct_white,
+    c.pct_black,
+    c.pct_hispanic,
+    c.pct_asian,
     -- CDC PLACES (most recent year)
     p.year          AS places_year,
     p.pct_obesity,
@@ -214,7 +279,25 @@ SELECT
     u.groceries_per_1000,
     u.fast_food_per_1000,
     u.pct_snap,
-    u.farmers_markets
+    u.farmers_markets,
+    -- EPA AQI (most recent year)
+    a.year          AS aqi_year,
+    a.median_aqi,
+    a.max_aqi,
+    a.good_days,
+    a.moderate_days,
+    a.unhealthy_sensitive_days,
+    a.unhealthy_days,
+    a.very_unhealthy_days,
+    a.hazardous_days,
+    a.pm25_days,
+    a.ozone_days,
+    -- FBI Crime (most recent year)
+    f.year          AS crime_year,
+    f.violent_crimes,
+    f.violent_crime_rate,
+    f.property_crimes,
+    f.property_crime_rate
 FROM geo_entities g
 LEFT JOIN LATERAL (
     SELECT * FROM census_acs5 WHERE fips = g.fips ORDER BY year DESC LIMIT 1
@@ -228,6 +311,12 @@ LEFT JOIN LATERAL (
 LEFT JOIN LATERAL (
     SELECT * FROM usda_food_env WHERE fips = g.fips ORDER BY data_year DESC LIMIT 1
 ) u ON TRUE
+LEFT JOIN LATERAL (
+    SELECT * FROM epa_aqi WHERE fips = g.fips ORDER BY year DESC LIMIT 1
+) a ON TRUE
+LEFT JOIN LATERAL (
+    SELECT * FROM fbi_crime WHERE fips = g.fips ORDER BY year DESC LIMIT 1
+) f ON TRUE
 WHERE g.geo_type = 'county';
 
 -- ---------------------------------------------------------------------------
@@ -240,7 +329,11 @@ INSERT INTO schema_migrations (version, description) VALUES
     (3, 'cdc_places: CDC PLACES county health outcomes'),
     (4, 'bls_laus: BLS Local Area Unemployment Statistics'),
     (5, 'usda_food_env: USDA Food Environment Atlas'),
-    (6, 'county_profile: cross-source view joining all county data')
+    (6, 'county_profile: cross-source view joining all county data'),
+    (7, 'epa_aqi: EPA Air Quality Index county data'),
+    (8, 'fbi_crime: FBI Crime Data county violent and property crime rates'),
+    (9, 'datasets: source catalog with quality stats'),
+    (10, 'census_acs5: health insurance, commute time, race/ethnicity columns')
 ON CONFLICT DO NOTHING;
 
 COMMIT;

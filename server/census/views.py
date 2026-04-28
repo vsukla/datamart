@@ -2,14 +2,17 @@ from django.db.models import Prefetch
 from rest_framework import generics
 from rest_framework.exceptions import ValidationError
 from .models import (
+    Dataset,
     GeoEntity, CensusAcs5, AggNationalSummary, AggStateSummary, AggRanking, AggYoY,
-    CdcPlaces, BlsLaus, UsdaFoodEnv, CountyProfile,
+    CdcPlaces, BlsLaus, UsdaFoodEnv, EpaAqi, FbiCrime, CountyProfile,
 )
 from .serializers import (
+    DatasetSerializer,
     GeoListSerializer, GeoDetailSerializer, EstimateWithGeoSerializer,
     AggNationalSummarySerializer, AggStateSummarySerializer,
     AggRankingSerializer, AggYoYSerializer,
-    CdcPlacesSerializer, BlsLausSerializer, UsdaFoodEnvSerializer, CountyProfileSerializer,
+    CdcPlacesSerializer, BlsLausSerializer, UsdaFoodEnvSerializer,
+    EpaAqiSerializer, FbiCrimeSerializer, CountyProfileSerializer,
 )
 
 VALID_GEO_TYPES = {"state", "county"}
@@ -62,10 +65,37 @@ class GeoDetailView(generics.RetrieveAPIView):
         )
 
 
+_RANGE_LOOKUPS = ("gte", "lte", "gt", "lt")
+_RANGE_METRICS = {
+    "median_income", "pct_bachelors", "median_home_value",
+    "pct_owner_occupied", "pct_poverty", "unemployment_rate",
+    "pct_health_insured", "mean_commute_minutes",
+    "pct_white", "pct_black", "pct_hispanic", "pct_asian",
+}
+
+
+def _apply_range_filters(qs, params):
+    """Apply {metric}__{gte|lte|gt|lt} filters from query params."""
+    for key, raw in params.items():
+        parts = key.rsplit("__", 1)
+        if len(parts) != 2:
+            continue
+        field, lookup = parts
+        if field not in _RANGE_METRICS or lookup not in _RANGE_LOOKUPS:
+            continue
+        try:
+            value = float(raw)
+        except (ValueError, TypeError):
+            raise ValidationError({key: "Must be a number."})
+        qs = qs.filter(**{f"{field}__{lookup}": value})
+    return qs
+
+
 class EstimatesListView(generics.ListAPIView):
     """
     GET /api/estimates/
-    Query params: geo_type (state|county), state_fips, year
+    Query params: geo_type (state|county), state_fips, year,
+                  {metric}__{gte|lte|gt|lt} (e.g. pct_poverty__gte=20)
     """
     serializer_class = EstimateWithGeoSerializer
 
@@ -80,12 +110,15 @@ class EstimatesListView(generics.ListAPIView):
             qs = qs.filter(geo__state_fips=state_fips)
         if year is not None:
             qs = qs.filter(year=year)
+        qs = _apply_range_filters(qs, self.request.query_params)
         return qs
 
 
 VALID_METRICS = {
     "median_income", "pct_bachelors", "median_home_value",
     "pct_owner_occupied", "pct_poverty", "unemployment_rate",
+    "pct_health_insured", "mean_commute_minutes",
+    "pct_white", "pct_black", "pct_hispanic", "pct_asian",
 }
 
 
@@ -215,6 +248,50 @@ class UsdaFoodEnvView(generics.ListAPIView):
             qs = qs.filter(fips__startswith=state_fips)
         if data_year is not None:
             qs = qs.filter(data_year=data_year)
+        return qs
+
+
+class DatasetCatalogView(generics.ListAPIView):
+    """GET /api/datasets/  — source catalog with quality stats for all ingested datasets"""
+    serializer_class = DatasetSerializer
+
+    def get_queryset(self):
+        return Dataset.objects.all()
+
+
+class EpaAqiView(generics.ListAPIView):
+    """GET /api/aqi/  — optional ?fips, ?state_fips, ?year"""
+    serializer_class = EpaAqiSerializer
+
+    def get_queryset(self):
+        qs = EpaAqi.objects.all()
+        fips = self.request.query_params.get("fips")
+        state_fips = self.request.query_params.get("state_fips")
+        year = _validate_year(self.request.query_params.get("year"))
+        if fips:
+            qs = qs.filter(fips=fips)
+        if state_fips:
+            qs = qs.filter(fips__startswith=state_fips)
+        if year is not None:
+            qs = qs.filter(year=year)
+        return qs
+
+
+class FbiCrimeView(generics.ListAPIView):
+    """GET /api/crime/  — optional ?fips, ?state_fips, ?year"""
+    serializer_class = FbiCrimeSerializer
+
+    def get_queryset(self):
+        qs = FbiCrime.objects.all()
+        fips = self.request.query_params.get("fips")
+        state_fips = self.request.query_params.get("state_fips")
+        year = _validate_year(self.request.query_params.get("year"))
+        if fips:
+            qs = qs.filter(fips=fips)
+        if state_fips:
+            qs = qs.filter(fips__startswith=state_fips)
+        if year is not None:
+            qs = qs.filter(year=year)
         return qs
 
 

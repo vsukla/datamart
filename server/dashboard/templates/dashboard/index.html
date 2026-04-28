@@ -50,6 +50,16 @@
     .sort-icon { color: #94a3b8; font-size: .75rem; }
     .source-col { font-size: .7rem; color: #94a3b8; display: block; font-weight: 400;
                   text-transform: none; letter-spacing: 0; }
+    .freshness-fresh  { background: #dcfce7; color: #15803d; }
+    .freshness-stale  { background: #fef9c3; color: #92400e; }
+    .freshness-never  { background: #f1f5f9; color: #64748b; }
+    .completeness-bar-wrap {
+      background: #e2e8f0; border-radius: 4px; height: 8px; flex: 1;
+      min-width: 60px; overflow: hidden;
+    }
+    .completeness-bar { height: 100%; border-radius: 4px; transition: width .3s; }
+    #catalogTable td  { font-size: .83rem; vertical-align: middle; }
+    #catalogTable th  { font-size: .8rem; }
   </style>
 </head>
 <body>
@@ -235,6 +245,35 @@
 
   </div><!-- /externalSection -->
 
+  <!-- Data Sources catalog panel -->
+  <div class="row mb-4">
+    <div class="col-12">
+      <div class="card">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <span>Data Sources</span>
+          <span class="text-muted small fw-normal" style="text-transform:none;letter-spacing:0;">
+            Freshness &amp; completeness at last quality check
+          </span>
+        </div>
+        <div class="card-body p-0">
+          <div class="table-responsive">
+            <table class="table table-sm mb-0" id="catalogTable">
+              <thead class="table-light">
+                <tr>
+                  <th style="width:22%">Source</th>
+                  <th style="width:12%">Rows</th>
+                  <th style="width:18%">Last Ingested</th>
+                  <th>Completeness</th>
+                </tr>
+              </thead>
+              <tbody id="catalogBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
 </div>
 
 <script>
@@ -245,6 +284,7 @@
   const stateNames     = {{ state_names_json|safe }};
   const stateHealth    = {{ state_health_json|safe }};
   const stateFood      = {{ state_food_json|safe }};
+  const catalogDatasets  = {{ datasets_json|safe }};
   const metricLabels      = {{ metric_labels_json|safe }};
   const healthMetricLabels = {{ health_metric_labels_json|safe }};
   const foodMetricLabels   = {{ food_metric_labels_json|safe }};
@@ -801,6 +841,70 @@
     buildScatterChart(profileData, scatterX, scatterY);
     buildCountyTable(profileData);
   }
+
+  // --- Dataset catalog panel ---
+  function buildCatalogTable() {
+    const NOW = Date.now();
+    const THIRTY_DAYS_MS = 30 * 24 * 3600 * 1000;
+
+    function freshnessLabel(iso) {
+      if (!iso) return { cls: "freshness-never", text: "Never ingested" };
+      const ms = NOW - new Date(iso).getTime();
+      const days = Math.floor(ms / 86400000);
+      const text = days === 0 ? "Today" : days === 1 ? "Yesterday" : `${days}d ago`;
+      return ms < THIRTY_DAYS_MS
+        ? { cls: "freshness-fresh", text }
+        : { cls: "freshness-stale", text };
+    }
+
+    function completenessFromNullRates(null_rates) {
+      if (!null_rates) return null;
+      const vals = Object.values(null_rates).filter(v => v !== null);
+      if (vals.length === 0) return null;
+      const avgNull = vals.reduce((s, v) => s + v, 0) / vals.length;
+      return Math.round((1 - avgNull) * 100);
+    }
+
+    function barColor(pct) {
+      if (pct === null) return "#cbd5e1";
+      if (pct >= 95) return "#22c55e";
+      if (pct >= 80) return "#f59e0b";
+      return "#ef4444";
+    }
+
+    const tbody = document.getElementById("catalogBody");
+    tbody.innerHTML = catalogDatasets.map(d => {
+      const fresh = freshnessLabel(d.last_ingested_at);
+      const rowCount = d.row_count != null
+        ? parseInt(d.row_count).toLocaleString()
+        : "<span class='text-muted'>—</span>";
+      const pct = completenessFromNullRates(d.null_rates);
+      const pctText = pct !== null ? `${pct}%` : "<span class='text-muted'>—</span>";
+      const barW = pct !== null ? pct : 0;
+      const barC = barColor(pct);
+
+      return `<tr>
+        <td>
+          <strong>${d.name}</strong>
+          <small class="text-muted d-block">${d.source_key}</small>
+        </td>
+        <td>${rowCount}</td>
+        <td>
+          <span class="stat-pill ${fresh.cls}" style="font-size:.75rem;">${fresh.text}</span>
+        </td>
+        <td>
+          <div class="d-flex align-items-center gap-2">
+            <div class="completeness-bar-wrap">
+              <div class="completeness-bar" style="width:${barW}%;background:${barC};"></div>
+            </div>
+            <span style="font-size:.8rem;min-width:2.5rem;">${pctText}</span>
+          </div>
+        </td>
+      </tr>`;
+    }).join("");
+  }
+
+  buildCatalogTable();
 
   document.getElementById("metricSelect").addEventListener("change", updateAll);
   document.getElementById("yearSelect").addEventListener("change", updateAll);

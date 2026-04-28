@@ -1,5 +1,5 @@
 """
-Tests for ingest_cdc_places, ingest_bls_laus, and ingest_usda_food_env.
+Tests for ingest_cdc_places, ingest_bls_laus, ingest_usda_food_env, and ingest_epa_aqi.
 All DB and HTTP calls are mocked.
 """
 import io
@@ -132,66 +132,56 @@ class TestCdcIngest:
 # ---------------------------------------------------------------------------
 
 from ingest_bls_laus import (
-    build_series_id, parse_fips_from_series, parse_bls_response,
-    upsert as bls_upsert, ingest as bls_ingest,
+    parse_flat_file,
+    upsert as bls_upsert,
+    ingest as bls_ingest,
 )
 
-SAMPLE_BLS_RESPONSE = {
-    "status": "REQUEST_SUCCEEDED",
-    "Results": {
-        "series": [
-            {
-                "seriesID": "LAUCN060370000000003",   # unemployment_rate
-                "data": [
-                    {"year": "2022", "period": "M13", "value": "5.0"},
-                    {"year": "2022", "period": "M01", "value": "4.8"},  # non-annual, skip
-                ],
-            },
-            {
-                "seriesID": "LAUCN060370000000006",   # labor_force
-                "data": [
-                    {"year": "2022", "period": "M13", "value": "5000000"},
-                ],
-            },
-        ]
-    },
-}
+_SAMPLE_FLAT = (
+    "LAUS Code\tState FIPS\tCounty FIPS\tArea Title\tYear\tPeriod\t"
+    "Labor Force\tEmployed\tUnemployed\tRate\n"
+    "CN0603700000000\t06\t037\tLos Angeles County, CA\t2022\tAnnual\t"
+    "5,000,000\t4,750,000\t250,000\t5.0\n"
+    "CN0100100000000\t01\t001\tAutauga County, AL\t2022\tAnnual\t"
+    "28,617\t27,978\t639\t2.2\n"
+)
 
 
-class TestBlsSeriesId:
-    def test_format(self):
-        sid = build_series_id("06037", "003")
-        assert sid == "LAUCN060370000000003"
-
-    def test_parse_roundtrip(self):
-        sid = build_series_id("06037", "003")
-        fips, stype = parse_fips_from_series(sid)
-        assert fips == "06037"
-        assert stype == "003"
-
-    def test_all_states_fips_preserved(self):
-        sid = build_series_id("01001", "006")
-        assert sid == "LAUCN010010000000006"
-
-
-class TestBlsParseResponse:
-    def test_annual_only(self):
-        records = parse_bls_response(SAMPLE_BLS_RESPONSE)
-        # M13 records for 06037/2022
+class TestBlsParseFlatFile:
+    def test_basic_row(self):
+        records = parse_flat_file(_SAMPLE_FLAT)
         assert ("06037", 2022) in records
 
-    def test_monthly_skipped(self):
-        records = parse_bls_response(SAMPLE_BLS_RESPONSE)
-        # only annual M13 included; M01 skipped (still just one record per fips/year)
-        assert len(records) == 1
+    def test_fips_constructed(self):
+        records = parse_flat_file(_SAMPLE_FLAT)
+        assert ("01001", 2022) in records
+
+    def test_comma_stripped_from_labor_force(self):
+        records = parse_flat_file(_SAMPLE_FLAT)
+        assert records[("06037", 2022)]["labor_force"] == 5_000_000
 
     def test_unemployment_rate_float(self):
-        records = parse_bls_response(SAMPLE_BLS_RESPONSE)
+        records = parse_flat_file(_SAMPLE_FLAT)
         assert records[("06037", 2022)]["unemployment_rate"] == 5.0
 
-    def test_labor_force_int(self):
-        records = parse_bls_response(SAMPLE_BLS_RESPONSE)
-        assert records[("06037", 2022)]["labor_force"] == 5000000
+    def test_header_row_skipped(self):
+        records = parse_flat_file(_SAMPLE_FLAT)
+        assert len(records) == 2
+
+    def test_bytes_input(self):
+        records = parse_flat_file(_SAMPLE_FLAT.encode())
+        assert ("06037", 2022) in records
+
+    def test_non_county_rows_skipped(self):
+        content = "Some header line\nAnother line\n" + _SAMPLE_FLAT
+        records = parse_flat_file(content)
+        assert len(records) == 2
+
+    def test_missing_value_returns_none(self):
+        line = "CN0600100000000\t06\t001\tAlpine County, CA\t2022\tAnnual\t\t\t\t\n"
+        records = parse_flat_file(line)
+        assert records[("06001", 2022)]["labor_force"] is None
+        assert records[("06001", 2022)]["unemployment_rate"] is None
 
 
 class TestBlsUpsert:
@@ -216,19 +206,36 @@ class TestBlsUpsert:
 
 
 class TestBlsIngest:
-    def test_ingest_builds_series_and_fetches(self):
+    def test_ingest_downloads_once_per_year(self):
         mock_conn = MagicMock()
         mock_cur = MagicMock()
         mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cur)
         mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
-        mock_cur.fetchall.return_value = [("06037",)]
         mock_cur.rowcount = 1
 
-        with patch("ingest_bls_laus.fetch_batch", return_value=SAMPLE_BLS_RESPONSE) as mock_fetch:
-            with patch("ingest_bls_laus.time.sleep"):
-                bls_ingest(mock_conn, 2022, 2022)
+        mock_resp = MagicMock()
+        mock_resp.content = _SAMPLE_FLAT.encode()
 
-        assert mock_fetch.called
+        with patch("ingest_bls_laus.requests.get", return_value=mock_resp) as mock_get:
+            bls_ingest(mock_conn, 2021, 2022)
+
+        assert mock_get.call_count == 2  # one download per year
+
+    def test_ingest_url_contains_year(self):
+        mock_conn = MagicMock()
+        mock_cur = MagicMock()
+        mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cur)
+        mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+        mock_cur.rowcount = 1
+
+        mock_resp = MagicMock()
+        mock_resp.content = _SAMPLE_FLAT.encode()
+
+        with patch("ingest_bls_laus.requests.get", return_value=mock_resp) as mock_get:
+            bls_ingest(mock_conn, 2023, 2023)
+
+        url = mock_get.call_args[0][0]
+        assert "23" in url
 
 
 # ---------------------------------------------------------------------------
@@ -321,7 +328,7 @@ class TestUsdaLoadWorkbook:
         data = self._workbook_bytes({
             "ACCESS":      [["FIPS", "PCT_LACCESS_POP15"], [6037, 12.5]],
             "STORES":      [["FIPS", "GROCPTH16"],         [6037, 0.42]],
-            "RESTAURANTS": [["FIPS", "FSRPTH16"],          [6037, 2.10]],
+            "RESTAURANTS": [["FIPS", "FFRPTH16"],          [6037, 2.10]],
             "ASSISTANCE":  [["FIPS", "PCT_SNAP17"],        [6037, 14.2]],
             "LOCAL":       [["FIPS", "FMRKT18"],           [6037, 45]],
         })
@@ -359,4 +366,238 @@ class TestUsdaUpsert:
     def test_commits(self):
         conn, cur = self._make_conn()
         usda_upsert(conn, {}, known_fips=set(), data_year=2018)
+        conn.commit.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# EPA AQI
+# ---------------------------------------------------------------------------
+
+from ingest_epa_aqi import (
+    parse_aqi_csv, normalize_county, match_to_fips, upsert as epa_upsert,
+)
+
+_SAMPLE_AQI_CSV = (
+    "State,County,Year,Days with AQI,Good Days,Moderate Days,"
+    "Unhealthy for Sensitive Groups Days,Unhealthy Days,Very Unhealthy Days,"
+    "Hazardous Days,Max AQI,90th Percentile AQI,Median AQI,"
+    "Days CO,Days NO2,Days Ozone,Days PM2.5,Days PM10\n"
+    "California,Los Angeles,2022,363,180,120,50,10,3,0,112,78,42,"
+    "0,5,95,85,10\n"
+    "Texas,Harris,2022,355,150,140,55,15,5,1,145,90,55,"
+    "1,10,80,100,8\n"
+)
+
+
+class TestEpaAqiNormalizeCounty:
+    def test_strips_county(self):
+        assert normalize_county("Los Angeles County") == "los angeles"
+
+    def test_strips_parish(self):
+        assert normalize_county("St. Tammany Parish") == "st. tammany"
+
+    def test_strips_borough(self):
+        assert normalize_county("Fairbanks North Star Borough") == "fairbanks north star"
+
+    def test_strips_city_and_borough(self):
+        assert normalize_county("Juneau City and Borough") == "juneau"
+
+    def test_already_normalized(self):
+        assert normalize_county("Los Angeles") == "los angeles"
+
+    def test_lowercases(self):
+        assert normalize_county("HARRIS COUNTY") == "harris"
+
+
+class TestEpaAqiParseCsv:
+    def test_parses_two_rows(self):
+        rows = parse_aqi_csv(_SAMPLE_AQI_CSV)
+        assert len(rows) == 2
+
+    def test_state_and_county(self):
+        rows = parse_aqi_csv(_SAMPLE_AQI_CSV)
+        assert rows[0]["state"] == "California"
+        assert rows[0]["county"] == "Los Angeles"
+
+    def test_numeric_fields(self):
+        rows = parse_aqi_csv(_SAMPLE_AQI_CSV)
+        r = rows[0]
+        assert r["year"] == 2022
+        assert r["good_days"] == 180
+        assert r["median_aqi"] == 42.0
+        assert r["max_aqi"] == 112
+        assert r["pm25_days"] == 85
+        assert r["ozone_days"] == 95
+
+    def test_bytes_input(self):
+        rows = parse_aqi_csv(_SAMPLE_AQI_CSV.encode())
+        assert len(rows) == 2
+
+    def test_empty_field_returns_none(self):
+        csv_with_blank = (
+            "State,County,Year,Days with AQI,Good Days,Moderate Days,"
+            "Unhealthy for Sensitive Groups Days,Unhealthy Days,Very Unhealthy Days,"
+            "Hazardous Days,Max AQI,90th Percentile AQI,Median AQI,"
+            "Days CO,Days NO2,Days Ozone,Days PM2.5,Days PM10\n"
+            "California,Alpine,2022,,,,,,,,,,,,,,\n"
+        )
+        rows = parse_aqi_csv(csv_with_blank)
+        assert rows[0]["good_days"] is None
+        assert rows[0]["median_aqi"] is None
+
+
+class TestEpaAqiMatchToFips:
+    def _geo_lookup(self):
+        return {
+            ("06", "los angeles"): "06037",
+            ("48", "harris"): "48201",
+        }
+
+    def test_matches_known_counties(self):
+        rows = parse_aqi_csv(_SAMPLE_AQI_CSV)
+        records = match_to_fips(rows, self._geo_lookup())
+        assert ("06037", 2022) in records
+        assert ("48201", 2022) in records
+
+    def test_unmatched_state_skipped(self):
+        rows = [{"state": "Unknown State", "county": "Somewhere", "year": 2022,
+                 "good_days": 100, "median_aqi": 40.0}]
+        records = match_to_fips(rows, self._geo_lookup())
+        assert len(records) == 0
+
+    def test_unmatched_county_skipped(self):
+        rows = [{"state": "California", "county": "Nonexistent County", "year": 2022,
+                 "good_days": 100, "median_aqi": 40.0}]
+        records = match_to_fips(rows, self._geo_lookup())
+        assert len(records) == 0
+
+    def test_metrics_in_record(self):
+        rows = parse_aqi_csv(_SAMPLE_AQI_CSV)
+        records = match_to_fips(rows, self._geo_lookup())
+        r = records[("06037", 2022)]
+        assert r["good_days"] == 180
+        assert r["median_aqi"] == 42.0
+
+
+class TestEpaAqiUpsert:
+    def _make_conn(self):
+        mock_conn = MagicMock()
+        mock_cur = MagicMock()
+        mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cur)
+        mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+        mock_cur.rowcount = 1
+        return mock_conn, mock_cur
+
+    def test_executes_once_per_record(self):
+        conn, cur = self._make_conn()
+        records = {("06037", 2022): {"days_with_aqi": 363, "good_days": 180,
+                                     "moderate_days": 120, "unhealthy_sensitive_days": 50,
+                                     "unhealthy_days": 10, "very_unhealthy_days": 3,
+                                     "hazardous_days": 0, "max_aqi": 112, "median_aqi": 42.0,
+                                     "pm25_days": 85, "ozone_days": 95}}
+        epa_upsert(conn, records)
+        assert cur.execute.call_count == 1
+
+    def test_commits(self):
+        conn, cur = self._make_conn()
+        epa_upsert(conn, {})
+        conn.commit.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# FBI Crime
+# ---------------------------------------------------------------------------
+
+from ingest_fbi_crime import (
+    parse_crime_csv, upsert as crime_upsert,
+)
+
+_SAMPLE_CRIME_CSV = (
+    "State,State Code,County,County Code,Year,Population,Violent Crime,Property Crime\n"
+    "California,06,Los Angeles,037,2022,10014009,15234,89023\n"
+    "Texas,48,Harris,201,2022,4731145,23456,145678\n"
+)
+
+# Two agencies in the same county to test aggregation
+_SAMPLE_CRIME_CSV_MULTI = (
+    "State,State Code,County,County Code,Year,Population,Violent Crime,Property Crime\n"
+    "California,06,Los Angeles,037,2022,6000000,10000,60000\n"
+    "California,06,Los Angeles,037,2022,4014009,5234,29023\n"
+)
+
+
+class TestFbiCrimeParseCsv:
+    def test_parses_two_counties(self):
+        records = parse_crime_csv(_SAMPLE_CRIME_CSV)
+        assert len(records) == 2
+
+    def test_fips_constructed(self):
+        records = parse_crime_csv(_SAMPLE_CRIME_CSV)
+        assert ("06037", 2022) in records
+        assert ("48201", 2022) in records
+
+    def test_violent_crime_count(self):
+        records = parse_crime_csv(_SAMPLE_CRIME_CSV)
+        assert records[("06037", 2022)]["violent_crimes"] == 15234
+
+    def test_property_crime_count(self):
+        records = parse_crime_csv(_SAMPLE_CRIME_CSV)
+        assert records[("48201", 2022)]["property_crimes"] == 145678
+
+    def test_rate_computed_per_100k(self):
+        records = parse_crime_csv(_SAMPLE_CRIME_CSV)
+        r = records[("06037", 2022)]
+        expected = round(15234 / 10014009 * 100_000, 1)
+        assert r["violent_crime_rate"] == expected
+
+    def test_multiple_agencies_aggregated(self):
+        records = parse_crime_csv(_SAMPLE_CRIME_CSV_MULTI)
+        assert len(records) == 1
+        r = records[("06037", 2022)]
+        assert r["violent_crimes"] == 15234      # 10000 + 5234
+        assert r["population_covered"] == 10014009  # 6000000 + 4014009
+
+    def test_bytes_input(self):
+        records = parse_crime_csv(_SAMPLE_CRIME_CSV.encode())
+        assert ("06037", 2022) in records
+
+    def test_zero_population_rate_is_none(self):
+        csv = (
+            "State,State Code,County,County Code,Year,Population,Violent Crime,Property Crime\n"
+            "California,06,Tiny,999,2022,0,0,0\n"
+        )
+        records = parse_crime_csv(csv)
+        r = records[("06999", 2022)]
+        assert r["violent_crime_rate"] is None
+        assert r["property_crime_rate"] is None
+
+
+class TestFbiCrimeUpsert:
+    def _make_conn(self):
+        mock_conn = MagicMock()
+        mock_cur = MagicMock()
+        mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cur)
+        mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+        mock_cur.rowcount = 1
+        return mock_conn, mock_cur
+
+    def test_executes_once_per_known_fips(self):
+        conn, cur = self._make_conn()
+        records = {("06037", 2022): {"population_covered": 10014009,
+                                     "violent_crimes": 15234, "violent_crime_rate": 450.1,
+                                     "property_crimes": 89023, "property_crime_rate": 2630.5}}
+        crime_upsert(conn, records, known_fips={"06037"})
+        assert cur.execute.call_count == 1
+
+    def test_unknown_fips_skipped(self):
+        conn, cur = self._make_conn()
+        records = {("99999", 2022): {"population_covered": 1000,
+                                     "violent_crimes": 5, "violent_crime_rate": 500.0,
+                                     "property_crimes": 20, "property_crime_rate": 2000.0}}
+        crime_upsert(conn, records, known_fips={"06037"})
+        assert cur.execute.call_count == 0
+
+    def test_commits(self):
+        conn, cur = self._make_conn()
+        crime_upsert(conn, {}, known_fips=set())
         conn.commit.assert_called_once()

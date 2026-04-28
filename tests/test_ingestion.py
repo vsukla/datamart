@@ -1,6 +1,6 @@
 import pytest
 from unittest.mock import patch, MagicMock, call
-from census_acs5 import _int, _pct, normalize_state, normalize_county, _fetch, load
+from census_acs5 import _int, _pct, _mean_commute, normalize_state, normalize_county, _fetch, load
 
 SAMPLE_STATE = {
     "NAME": "California",
@@ -15,6 +15,20 @@ SAMPLE_STATE = {
     "B17001_001E": "39500000",
     "B23025_005E": "1200000",
     "B23025_002E": "18900000",
+    # health insurance
+    "C27001_001E": "38000000",
+    "C27001_002E": "34200000",
+    # commute
+    "B08136_001E": "306000000",
+    "B08301_001E": "18000000",
+    "B08301_021E": "2000000",
+    # race
+    "B02001_001E": "39356104",
+    "B02001_002E": "14000000",
+    "B02001_003E": "2300000",
+    "B02001_005E": "5900000",
+    "B03003_001E": "39356104",
+    "B03003_003E": "15600000",
     "state": "6",  # unpadded, as the API returns it
 }
 
@@ -106,6 +120,48 @@ class TestNormalizeState:
         raw = {**SAMPLE_STATE, "B19013_001E": "-666666666"}
         _, est = normalize_state(raw, 2022)
         assert est["median_income"] is None
+
+    def test_estimate_pct_health_insured(self):
+        _, est = normalize_state(SAMPLE_STATE, 2022)
+        assert est["pct_health_insured"] == round(34200000 / 38000000 * 100, 2)
+
+    def test_estimate_mean_commute_minutes(self):
+        _, est = normalize_state(SAMPLE_STATE, 2022)
+        # commuters = 18000000 - 2000000 = 16000000; mean = 306000000 / 16000000
+        assert est["mean_commute_minutes"] == round(306000000 / 16000000, 1)
+
+    def test_estimate_pct_white(self):
+        _, est = normalize_state(SAMPLE_STATE, 2022)
+        assert est["pct_white"] == round(14000000 / 39356104 * 100, 2)
+
+    def test_estimate_pct_black(self):
+        _, est = normalize_state(SAMPLE_STATE, 2022)
+        assert est["pct_black"] == round(2300000 / 39356104 * 100, 2)
+
+    def test_estimate_pct_hispanic(self):
+        _, est = normalize_state(SAMPLE_STATE, 2022)
+        assert est["pct_hispanic"] == round(15600000 / 39356104 * 100, 2)
+
+    def test_estimate_pct_asian(self):
+        _, est = normalize_state(SAMPLE_STATE, 2022)
+        assert est["pct_asian"] == round(5900000 / 39356104 * 100, 2)
+
+
+class TestMeanCommute:
+    def test_basic(self):
+        assert _mean_commute("300000", "10000", "1000") == round(300000 / 9000, 1)
+
+    def test_zero_commuters(self):
+        assert _mean_commute("300000", "5000", "5000") is None
+
+    def test_none_aggregate(self):
+        assert _mean_commute(None, "10000", "1000") is None
+
+    def test_none_total(self):
+        assert _mean_commute("300000", None, "0") is None
+
+    def test_wfh_defaults_to_zero_when_none(self):
+        assert _mean_commute("120000", "4000", None) == round(120000 / 4000, 1)
 
 
 class TestNormalizeCounty:

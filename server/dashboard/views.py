@@ -3,7 +3,7 @@ from django.core.serializers.json import DjangoJSONEncoder
 from django.db.models import Avg, Q
 from django.db.models.functions import Substr
 from django.views.generic import TemplateView
-from census.models import GeoEntity, AggNationalSummary, AggStateSummary, AggYoY, CdcPlaces, UsdaFoodEnv
+from census.models import GeoEntity, AggNationalSummary, AggStateSummary, AggYoY, CdcPlaces, UsdaFoodEnv, Dataset
 
 METRIC_LABELS = {
     "median_income":      "Median Income",
@@ -87,8 +87,14 @@ class DashboardView(TemplateView):
             .order_by("state_fips")
         )
 
+        datasets = list(Dataset.objects.values(
+            "source_key", "name", "row_count",
+            "null_rates", "last_ingested_at", "quality_computed_at",
+        ))
+
         ctx.update({
             "national_json":             json.dumps(national, cls=DjangoJSONEncoder),
+            "datasets_json":             json.dumps(datasets, cls=DjangoJSONEncoder),
             "state_summary_json":        json.dumps(state_summary, cls=DjangoJSONEncoder),
             "yoy_json":                  json.dumps(yoy, cls=DjangoJSONEncoder),
             "state_names_json":          json.dumps(state_names),
