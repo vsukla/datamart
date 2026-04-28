@@ -65,7 +65,7 @@ Added 2 new county/state datasets, range filters, automation, and bug fixes.
 | Item | Status | Notes |
 |---|---|---|
 | Fix `fast_food_per_1000` — was using full-service restaurant column | ✅ | Issue #24; corrected to `FFRPTH16` |
-| BLS LAUS: switch to flat-file download (no rate limit) | ✅ | Issue #23; now ~3,100 counties per year, no API key |
+| BLS LAUS: switch to BLS Public Data API (flat files blocked by Akamai) | ⚠️ | Issue #23/#26; BLS_API_KEY required — see #26 |
 | Range filters on `/api/estimates/` (e.g. `pct_poverty__gte=20`) | ✅ | Issue #14; 12 supported metrics |
 | Tests for cross-source dashboard features | ✅ | Issue #25; scatter, county table, health/food ranking |
 | EPA air quality + FBI crime fields in county profile | ✅ | Both sources in `county_profile` view + `/api/profile/` |
@@ -120,6 +120,51 @@ Extend beyond county/state. Each new entity type links back to FIPS.
 
 ---
 
+## Immediate — Pending Issues & Bugs
+
+Pick up here next session.
+
+### #26 — BLS LAUS: needs API key to populate data
+
+| Field | Value |
+|---|---|
+| File | `ingestion/ingest_bls_laus.py` |
+| Blocker | BLS flat-file URL blocked by Akamai CDN (403 regardless of headers) |
+| Fix done | Rewrote script to use BLS Public Data API v2 (`POST /timeseries/data/`) |
+| What's left | Register free key at https://data.bls.gov/registrationEngine/registerUser.action → add `BLS_API_KEY=<key>` to `config/.env` → re-run `python ingestion/ingest_bls_laus.py` |
+| Current DB | 880 rows (old partial data); target is ~15,500 (3,100 counties × 5 years) |
+| Without key | Script still runs but hits the 25-series/day unauthenticated limit quickly |
+
+### #27 — FBI Crime: needs API key + validate state endpoint returns per-agency data
+
+| Field | Value |
+|---|---|
+| File | `ingestion/ingest_fbi_crime.py` |
+| Blocker | Old flat-file URL (`cde.ucr.cjis.gov/…/county_{year}.zip`) returns 404 |
+| Fix done | Rewrote to use FBI CDE API: agency list per state + state-level offense endpoint |
+| What's left | **Step 1**: Register free key at https://api.data.gov/signup/ → add `FBI_API_KEY=<key>` to `config/.env` |
+| | **Step 2**: Run for one year first: `python ingestion/ingest_fbi_crime.py --start 2022 --end 2022` |
+| | **Step 3**: Verify rows loaded. If 0, the state-level offense endpoint may only return a state aggregate (not per-agency). In that case, the `actuals` dict will have no `"* Offenses"` keys — add logging to confirm and switch to per-ORI calls if needed. |
+| Current DB | 0 rows |
+| Risk | State summarized endpoint behaviour under a real key was NOT tested (rate-limited during dev). Per-agency fallback may be required. |
+
+### #28 — BLS LAUS Item #23 in backlog is stale
+
+| Field | Value |
+|---|---|
+| Issue | Issue #23 was marked "✅ Closed" for switching to flat-file, but flat files are now blocked |
+| Action | Reopen / relabel as "switched to BLS API (key required)" once #26 is confirmed working |
+
+### #29 — `mean_commute_minutes` NULL for ~9,000 Census rows
+
+| Field | Value |
+|---|---|
+| Cause | B08136 (aggregate travel time) is suppressed by Census for small/rural counties |
+| Impact | ~56% of rows (mostly small counties) have `mean_commute_minutes = NULL` |
+| Decision needed | Accept NULLs as expected, or find an alternative variable (B08135 per-mode, or ACS5 subject table) |
+
+---
+
 ## Backlog (unscheduled)
 
 Issues tracked in GitHub: https://github.com/vsukla/datamart/issues
@@ -132,9 +177,13 @@ Issues tracked in GitHub: https://github.com/vsukla/datamart/issues
 | #17 | Token-based auth + rate limiting | 5 | ⬜ Open |
 | #18 | Schedule compute_aggregates.py via GitHub Actions | 3 | ✅ Closed |
 | #22 | Cross-source dynamic query API `/api/query/` | 5 | ⬜ Open |
-| #23 | BLS LAUS: switch to flat-file download | 2e | ✅ Closed |
+| #23 | BLS LAUS: switch to flat-file download | 2e | ⚠️ Stale — flat files now blocked, see #26 |
 | #24 | Fix `fast_food_per_1000` column | data quality | ✅ Closed |
 | #25 | Tests for cross-source dashboard features | 2e | ✅ Closed |
+| #26 | BLS LAUS: register BLS_API_KEY and re-run ingestion | immediate | ⬜ Open |
+| #27 | FBI Crime: register FBI_API_KEY, test new CDE API ingestion | immediate | ⬜ Open |
+| #28 | Reopen/relabel issue #23 once BLS API ingestion confirmed | immediate | ⬜ Open |
+| #29 | Census `mean_commute_minutes` NULL for small counties — accept or fix | data quality | ⬜ Open |
 
 ---
 
