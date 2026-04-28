@@ -46,14 +46,14 @@ MEASURES = {
     "04": "unemployed",
     "03": "unemployment_rate",
 }
-BATCH_SIZE_KEYED   = 500
+BATCH_SIZE_KEYED   = 50   # BLS API returns at most 50 series per request in practice
 BATCH_SIZE_NOKEY   = 25
 RETRY_DELAY        = 5   # seconds on HTTP error
 
 
 def _series_id(fips: str, measure: str) -> str:
     """Build a LAUS series ID from a 5-digit county FIPS and 2-digit measure code."""
-    return f"LAUCN{fips}0000000{measure}"
+    return f"LAUCN{fips}00000000{measure}"
 
 
 def _fetch_series_batch(
@@ -85,15 +85,40 @@ def _fetch_series_batch(
         resp.raise_for_status()
         result = resp.json()
         if result.get("status") == "REQUEST_SUCCEEDED":
-            # Parse results: annual average rows have period == "M13"
+            # Prefer official M13 annual average; fall back to mean of M01–M12.
+            # Not all county series publish M13 even with annualaverage=True.
             out: dict[str, list[dict]] = {}
             for series in result.get("Results", {}).get("series", []):
                 sid = series["seriesID"]
-                out[sid] = [
-                    {"year": int(d["year"]), "value": float(d["value"])}
-                    for d in series.get("data", [])
-                    if d.get("period") == "M13" and d.get("value", "-") not in ("-", "")
-                ]
+                data = series.get("data", [])
+
+                # Group monthly values by year
+                by_year: dict[int, list[float]] = {}
+                m13_by_year: dict[int, float] = {}
+                for d in data:
+                    val_str = d.get("value", "-")
+                    if val_str in ("-", ""):
+                        continue
+                    yr = int(d["year"])
+                    period = d.get("period", "")
+                    try:
+                        val = float(val_str)
+                    except (ValueError, TypeError):
+                        continue
+                    if period == "M13":
+                        m13_by_year[yr] = val
+                    elif period.startswith("M") and period[1:].isdigit():
+                        by_year.setdefault(yr, []).append(val)
+
+                annual: list[dict] = []
+                all_years = set(m13_by_year) | set(by_year)
+                for yr in sorted(all_years):
+                    if yr in m13_by_year:
+                        annual.append({"year": yr, "value": m13_by_year[yr]})
+                    elif by_year.get(yr):
+                        avg = round(sum(by_year[yr]) / len(by_year[yr]), 1)
+                        annual.append({"year": yr, "value": avg})
+                out[sid] = annual
             return out
         msg = " ".join(result.get("message", []))
         if "threshold" in msg.lower() or "limit" in msg.lower():
