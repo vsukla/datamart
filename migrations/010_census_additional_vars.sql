@@ -12,7 +12,9 @@ ALTER TABLE census_acs5
     ADD COLUMN IF NOT EXISTS pct_asian            NUMERIC(5, 2);
 
 -- Rebuild county_profile view to include the new census columns
-CREATE OR REPLACE VIEW county_profile AS
+-- DROP required because CREATE OR REPLACE cannot insert columns mid-list
+DROP VIEW IF EXISTS county_profile;
+CREATE VIEW county_profile AS
 SELECT
     g.fips,
     g.name          AS county_name,
