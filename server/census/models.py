@@ -223,8 +223,71 @@ class FbiCrime(models.Model):
         ordering = ["fips", "year"]
 
 
+class NhtsaTraffic(models.Model):
+    fips = models.CharField(max_length=5)
+    year = models.SmallIntegerField()
+    fatalities = models.IntegerField()
+    fatality_rate = models.DecimalField(max_digits=6, decimal_places=1, null=True)
+    fetched_at = models.DateTimeField(null=True)
+
+    class Meta:
+        db_table = "nhtsa_traffic"
+        managed = False
+        ordering = ["fips", "year"]
+
+
+class EiaEnergy(models.Model):
+    state_fips = models.CharField(max_length=2)
+    year = models.SmallIntegerField()
+    elec_res_bbtu = models.IntegerField(null=True)
+    elec_com_bbtu = models.IntegerField(null=True)
+    elec_ind_bbtu = models.IntegerField(null=True)
+    elec_total_bbtu = models.IntegerField(null=True)
+    gas_res_bbtu = models.IntegerField(null=True)
+    gas_com_bbtu = models.IntegerField(null=True)
+    gas_ind_bbtu = models.IntegerField(null=True)
+    gas_total_bbtu = models.IntegerField(null=True)
+    fetched_at = models.DateTimeField(null=True)
+
+    class Meta:
+        db_table = "eia_energy"
+        managed = False
+        ordering = ["state_fips", "year"]
+
+
+class HudFmr(models.Model):
+    fips = models.CharField(max_length=5)
+    year = models.SmallIntegerField()
+    fmr_0br = models.IntegerField(null=True)
+    fmr_1br = models.IntegerField(null=True)
+    fmr_2br = models.IntegerField(null=True)
+    fmr_3br = models.IntegerField(null=True)
+    fmr_4br = models.IntegerField(null=True)
+    fetched_at = models.DateTimeField(null=True)
+
+    class Meta:
+        db_table = "hud_fmr"
+        managed = False
+        ordering = ["fips", "year"]
+
+
+class EdGraduation(models.Model):
+    fips = models.CharField(max_length=5)
+    school_year = models.SmallIntegerField()
+    grad_rate_all = models.DecimalField(max_digits=5, decimal_places=1, null=True)
+    grad_rate_ecd = models.DecimalField(max_digits=5, decimal_places=1, null=True)
+    cohort_all = models.IntegerField(null=True)
+    num_districts = models.SmallIntegerField(null=True)
+    fetched_at = models.DateTimeField(null=True)
+
+    class Meta:
+        db_table = "ed_graduation"
+        managed = False
+        ordering = ["fips", "school_year"]
+
+
 class CountyProfile(models.Model):
-    """Read-only view joining Census ACS5, CDC PLACES, BLS LAUS, USDA Food Env, EPA AQI, and FBI Crime."""
+    """Read-only view joining all county-level data sources."""
     fips = models.CharField(max_length=5, primary_key=True)
     county_name = models.CharField(max_length=200)
     state_fips = models.CharField(max_length=2)
@@ -283,6 +346,23 @@ class CountyProfile(models.Model):
     violent_crime_rate = models.DecimalField(max_digits=8, decimal_places=1, null=True)
     property_crimes = models.IntegerField(null=True)
     property_crime_rate = models.DecimalField(max_digits=8, decimal_places=1, null=True)
+    # NHTSA Traffic Fatalities
+    traffic_year = models.SmallIntegerField(null=True)
+    fatalities = models.IntegerField(null=True)
+    fatality_rate = models.DecimalField(max_digits=6, decimal_places=1, null=True)
+    # HUD Fair Market Rents
+    hud_year = models.SmallIntegerField(null=True)
+    fmr_0br = models.IntegerField(null=True)
+    fmr_1br = models.IntegerField(null=True)
+    fmr_2br = models.IntegerField(null=True)
+    fmr_3br = models.IntegerField(null=True)
+    fmr_4br = models.IntegerField(null=True)
+    # Education Graduation Rates
+    grad_year = models.SmallIntegerField(null=True)
+    grad_rate_all = models.DecimalField(max_digits=5, decimal_places=1, null=True)
+    grad_rate_ecd = models.DecimalField(max_digits=5, decimal_places=1, null=True)
+    cohort_all = models.IntegerField(null=True)
+    num_districts = models.SmallIntegerField(null=True)
 
     class Meta:
         db_table = "county_profile"

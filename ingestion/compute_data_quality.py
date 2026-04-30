@@ -65,6 +65,23 @@ SOURCE_CONFIG: dict[str, tuple[str, list[str]]] = {
         ["population_covered", "violent_crimes", "violent_crime_rate",
          "property_crimes", "property_crime_rate"],
     ),
+    "hud_fmr": (
+        "hud_fmr",
+        ["fmr_0br", "fmr_1br", "fmr_2br", "fmr_3br", "fmr_4br"],
+    ),
+    "eia_energy": (
+        "eia_energy",
+        ["elec_res_bbtu", "elec_com_bbtu", "elec_ind_bbtu", "elec_total_bbtu",
+         "gas_res_bbtu", "gas_com_bbtu", "gas_ind_bbtu", "gas_total_bbtu"],
+    ),
+    "nhtsa_traffic": (
+        "nhtsa_traffic",
+        ["fatalities", "fatality_rate"],
+    ),
+    "ed_graduation": (
+        "ed_graduation",
+        ["grad_rate_all", "grad_rate_ecd", "cohort_all"],
+    ),
 }
 
 

@@ -2,7 +2,7 @@
 -- Apply this to a fresh database for a clean install.
 -- For incremental changes to an existing database use migrations/migrate.sh instead.
 --
--- Last updated: migration 010
+-- Last updated: migration 014
 
 BEGIN;
 
@@ -234,6 +234,69 @@ CREATE TABLE IF NOT EXISTS fbi_crime (
 CREATE INDEX IF NOT EXISTS idx_fbi_crime_fips ON fbi_crime (fips);
 CREATE INDEX IF NOT EXISTS idx_fbi_crime_year ON fbi_crime (year);
 
+CREATE TABLE IF NOT EXISTS hud_fmr (
+    id         SERIAL      PRIMARY KEY,
+    fips       VARCHAR(5)  NOT NULL REFERENCES geo_entities(fips),
+    year       SMALLINT    NOT NULL,
+    fmr_0br    INTEGER,
+    fmr_1br    INTEGER,
+    fmr_2br    INTEGER,
+    fmr_3br    INTEGER,
+    fmr_4br    INTEGER,
+    fetched_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE (fips, year)
+);
+
+CREATE INDEX IF NOT EXISTS idx_hud_fmr_fips ON hud_fmr (fips);
+CREATE INDEX IF NOT EXISTS idx_hud_fmr_year ON hud_fmr (year);
+
+CREATE TABLE IF NOT EXISTS eia_energy (
+    id              SERIAL     PRIMARY KEY,
+    state_fips      CHAR(2)    NOT NULL REFERENCES geo_entities(fips),
+    year            SMALLINT   NOT NULL,
+    elec_res_bbtu   INTEGER,
+    elec_com_bbtu   INTEGER,
+    elec_ind_bbtu   INTEGER,
+    elec_total_bbtu INTEGER,
+    gas_res_bbtu    INTEGER,
+    gas_com_bbtu    INTEGER,
+    gas_ind_bbtu    INTEGER,
+    gas_total_bbtu  INTEGER,
+    fetched_at      TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE (state_fips, year)
+);
+
+CREATE INDEX IF NOT EXISTS idx_eia_energy_state_fips ON eia_energy (state_fips);
+CREATE INDEX IF NOT EXISTS idx_eia_energy_year       ON eia_energy (year);
+
+CREATE TABLE IF NOT EXISTS nhtsa_traffic (
+    id            SERIAL      PRIMARY KEY,
+    fips          VARCHAR(5)  NOT NULL REFERENCES geo_entities(fips),
+    year          SMALLINT    NOT NULL,
+    fatalities    INTEGER     NOT NULL,
+    fatality_rate NUMERIC(6, 1),
+    fetched_at    TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE (fips, year)
+);
+
+CREATE INDEX IF NOT EXISTS idx_nhtsa_traffic_fips ON nhtsa_traffic (fips);
+CREATE INDEX IF NOT EXISTS idx_nhtsa_traffic_year ON nhtsa_traffic (year);
+
+CREATE TABLE IF NOT EXISTS ed_graduation (
+    id             SERIAL      PRIMARY KEY,
+    fips           VARCHAR(5)  NOT NULL REFERENCES geo_entities(fips),
+    school_year    SMALLINT    NOT NULL,
+    grad_rate_all  NUMERIC(5,1),
+    grad_rate_ecd  NUMERIC(5,1),
+    cohort_all     INTEGER,
+    num_districts  SMALLINT,
+    fetched_at     TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE (fips, school_year)
+);
+
+CREATE INDEX IF NOT EXISTS idx_ed_graduation_fips ON ed_graduation (fips);
+CREATE INDEX IF NOT EXISTS idx_ed_graduation_year ON ed_graduation (school_year);
+
 -- ---------------------------------------------------------------------------
 -- Cross-source county profile view
 -- ---------------------------------------------------------------------------
@@ -297,7 +360,24 @@ SELECT
     f.violent_crimes,
     f.violent_crime_rate,
     f.property_crimes,
-    f.property_crime_rate
+    f.property_crime_rate,
+    -- HUD Fair Market Rents (most recent year)
+    h.year          AS hud_year,
+    h.fmr_0br,
+    h.fmr_1br,
+    h.fmr_2br,
+    h.fmr_3br,
+    h.fmr_4br,
+    -- NHTSA Traffic Fatalities (most recent year)
+    t.year          AS traffic_year,
+    t.fatalities,
+    t.fatality_rate,
+    -- Education graduation rates (most recent school year)
+    e.school_year   AS grad_year,
+    e.grad_rate_all,
+    e.grad_rate_ecd,
+    e.cohort_all,
+    e.num_districts
 FROM geo_entities g
 LEFT JOIN LATERAL (
     SELECT * FROM census_acs5 WHERE fips = g.fips ORDER BY year DESC LIMIT 1
@@ -317,6 +397,15 @@ LEFT JOIN LATERAL (
 LEFT JOIN LATERAL (
     SELECT * FROM fbi_crime WHERE fips = g.fips ORDER BY year DESC LIMIT 1
 ) f ON TRUE
+LEFT JOIN LATERAL (
+    SELECT * FROM hud_fmr WHERE fips = g.fips ORDER BY year DESC LIMIT 1
+) h ON TRUE
+LEFT JOIN LATERAL (
+    SELECT * FROM nhtsa_traffic WHERE fips = g.fips ORDER BY year DESC LIMIT 1
+) t ON TRUE
+LEFT JOIN LATERAL (
+    SELECT * FROM ed_graduation WHERE fips = g.fips ORDER BY school_year DESC LIMIT 1
+) e ON TRUE
 WHERE g.geo_type = 'county';
 
 -- ---------------------------------------------------------------------------
@@ -333,7 +422,11 @@ INSERT INTO schema_migrations (version, description) VALUES
     (7, 'epa_aqi: EPA Air Quality Index county data'),
     (8, 'fbi_crime: FBI Crime Data county violent and property crime rates'),
     (9, 'datasets: source catalog with quality stats'),
-    (10, 'census_acs5: health insurance, commute time, race/ethnicity columns')
+    (10, 'census_acs5: health insurance, commute time, race/ethnicity columns'),
+    (11, 'hud_fmr: HUD Fair Market Rents county data'),
+    (12, 'eia_energy: EIA electricity and natural gas consumption by state'),
+    (13, 'nhtsa_traffic: NHTSA FARS traffic fatalities county data'),
+    (14, 'ed_graduation: Education 4-year graduation rates at county level')
 ON CONFLICT DO NOTHING;
 
 COMMIT;

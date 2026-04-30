@@ -1,5 +1,5 @@
 """
-Tests for ingest_cdc_places, ingest_bls_laus, ingest_usda_food_env, and ingest_epa_aqi.
+Tests for ingest_cdc_places, ingest_bls_laus, ingest_usda_food_env, ingest_epa_aqi, and ingest_hud_fmr.
 All DB and HTTP calls are mocked.
 """
 import io
@@ -611,4 +611,409 @@ class TestFbiCrimeUpsert:
     def test_commits(self):
         conn, cur = self._make_conn()
         crime_upsert(conn, {}, known_fips=set())
+        conn.commit.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# HUD Fair Market Rents
+# ---------------------------------------------------------------------------
+
+from ingest_hud_fmr import parse_counties, upsert as hud_upsert
+
+SAMPLE_HUD_COUNTIES = [
+    {
+        "fips_code": "0603799999", "county_name": "Los Angeles County",
+        "year": 2023,
+        "Efficiency": 2079, "One-Bedroom": 2328, "Two-Bedroom": 2903,
+        "Three-Bedroom": 3681, "Four-Bedroom": 4098,
+    },
+    {
+        "fips_code": "4820199999", "county_name": "Harris County",
+        "year": 2023,
+        "Efficiency": 990, "One-Bedroom": 1080, "Two-Bedroom": 1320,
+        "Three-Bedroom": 1720, "Four-Bedroom": 2050,
+    },
+    {
+        "fips_code": "9999999999", "county_name": "Unknown County",
+        "year": 2023,
+        "Efficiency": 500, "One-Bedroom": 600, "Two-Bedroom": 700,
+        "Three-Bedroom": 800, "Four-Bedroom": 900,
+    },
+]
+
+
+class TestHudParseCounties:
+    def test_fips_extracted_from_10digit_code(self):
+        records = parse_counties(SAMPLE_HUD_COUNTIES[:1], known_fips={"06037"}, year=2023)
+        assert ("06037", 2023) in records
+
+    def test_unknown_fips_skipped(self):
+        records = parse_counties(SAMPLE_HUD_COUNTIES, known_fips={"06037", "48201"}, year=2023)
+        assert ("99999", 2023) not in records
+
+    def test_known_fips_included(self):
+        records = parse_counties(SAMPLE_HUD_COUNTIES, known_fips={"06037", "48201"}, year=2023)
+        assert len(records) == 2
+
+    def test_bedroom_fields_mapped(self):
+        records = parse_counties(SAMPLE_HUD_COUNTIES[:1], known_fips={"06037"}, year=2023)
+        r = records[("06037", 2023)]
+        assert r["fmr_0br"] == 2079
+        assert r["fmr_1br"] == 2328
+        assert r["fmr_2br"] == 2903
+        assert r["fmr_3br"] == 3681
+        assert r["fmr_4br"] == 4098
+
+    def test_year_parameter_used(self):
+        records = parse_counties(SAMPLE_HUD_COUNTIES[:1], known_fips={"06037"}, year=2022)
+        assert ("06037", 2022) in records
+
+    def test_short_fips_code_skipped(self):
+        bad = [{"fips_code": "06", "Efficiency": 1000,
+                "One-Bedroom": 1100, "Two-Bedroom": 1200,
+                "Three-Bedroom": 1300, "Four-Bedroom": 1400}]
+        records = parse_counties(bad, known_fips={"06"}, year=2023)
+        assert len(records) == 0
+
+
+class TestHudUpsert:
+    def _make_conn(self):
+        mock_conn = MagicMock()
+        mock_cur = MagicMock()
+        mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cur)
+        mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+        mock_cur.rowcount = 1
+        return mock_conn, mock_cur
+
+    def test_upserts_records(self):
+        conn, cur = self._make_conn()
+        records = parse_counties(SAMPLE_HUD_COUNTIES[:2], known_fips={"06037", "48201"}, year=2023)
+        hud_upsert(conn, records)
+        assert cur.execute.call_count == 2
+
+    def test_empty_records_no_execute(self):
+        conn, cur = self._make_conn()
+        hud_upsert(conn, {})
+        cur.execute.assert_not_called()
+
+    def test_commits(self):
+        conn, cur = self._make_conn()
+        hud_upsert(conn, {})
+        conn.commit.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# EIA State Energy Data
+# ---------------------------------------------------------------------------
+
+from ingest_eia_energy import pivot as eia_pivot, upsert as eia_upsert, STATE_ABBR_TO_FIPS
+
+SAMPLE_EIA_ROWS = [
+    {"stateId": "CA", "period": "2022", "seriesId": "ESTCB", "value": "843617"},
+    {"stateId": "CA", "period": "2022", "seriesId": "ESRCB", "value": "305518"},
+    {"stateId": "CA", "period": "2022", "seriesId": "NGRCB", "value": "464763"},
+    {"stateId": "TX", "period": "2022", "seriesId": "ESTCB", "value": "1500000"},
+    {"stateId": "US", "period": "2022", "seriesId": "ESTCB", "value": "38000000"},
+]
+
+
+class TestEiaPivot:
+    def test_state_abbr_mapped_to_fips(self):
+        records = eia_pivot(SAMPLE_EIA_ROWS)
+        assert ("06", 2022) in records
+
+    def test_us_total_excluded(self):
+        records = eia_pivot(SAMPLE_EIA_ROWS)
+        for key in records:
+            assert key[0] != "US"
+
+    def test_series_mapped_to_column(self):
+        records = eia_pivot(SAMPLE_EIA_ROWS)
+        assert records[("06", 2022)]["elec_total_bbtu"] == 843617
+        assert records[("06", 2022)]["elec_res_bbtu"] == 305518
+        assert records[("06", 2022)]["gas_res_bbtu"] == 464763
+
+    def test_multiple_states(self):
+        records = eia_pivot(SAMPLE_EIA_ROWS)
+        assert ("48", 2022) in records
+
+    def test_unknown_series_ignored(self):
+        rows = [{"stateId": "CA", "period": "2022", "seriesId": "XXXXB", "value": "999"}]
+        records = eia_pivot(rows)
+        assert ("06", 2022) not in records
+
+    def test_state_abbr_to_fips_mapping_complete(self):
+        assert len(STATE_ABBR_TO_FIPS) == 51  # 50 states + DC
+
+
+class TestEiaUpsert:
+    def _make_conn(self):
+        mock_conn = MagicMock()
+        mock_cur = MagicMock()
+        mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cur)
+        mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+        mock_cur.rowcount = 1
+        return mock_conn, mock_cur
+
+    def test_upserts_one_row_per_record(self):
+        conn, cur = self._make_conn()
+        records = eia_pivot(SAMPLE_EIA_ROWS)
+        eia_upsert(conn, records)
+        assert cur.execute.call_count == len(records)
+
+    def test_empty_records_no_execute(self):
+        conn, cur = self._make_conn()
+        eia_upsert(conn, {})
+        cur.execute.assert_not_called()
+
+    def test_commits(self):
+        conn, cur = self._make_conn()
+        eia_upsert(conn, {})
+        conn.commit.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# NHTSA Traffic Fatalities
+# ---------------------------------------------------------------------------
+
+import io
+import zipfile
+import csv
+
+from ingest_nhtsa_traffic import parse_accident_csv, upsert as nhtsa_upsert
+
+
+def _make_fars_zip(rows: list[dict], fieldnames: list[str] | None = None) -> bytes:
+    """Build an in-memory ZIP containing accident.csv with the given rows."""
+    if fieldnames is None:
+        fieldnames = ["STATE", "COUNTY", "FATALS"]
+    buf = io.BytesIO()
+    csv_buf = io.StringIO()
+    writer = csv.DictWriter(csv_buf, fieldnames=fieldnames)
+    writer.writeheader()
+    writer.writerows(rows)
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("FARS2022NationalCSV/accident.csv", csv_buf.getvalue())
+    return buf.getvalue()
+
+
+SAMPLE_ACCIDENT_ROWS = [
+    {"STATE": "6",  "COUNTY": "37",  "FATALS": "2"},
+    {"STATE": "6",  "COUNTY": "37",  "FATALS": "1"},   # same county — should sum to 3
+    {"STATE": "48", "COUNTY": "113", "FATALS": "4"},
+    {"STATE": "6",  "COUNTY": "0",   "FATALS": "99"},  # county=0 → skip
+    {"STATE": "6",  "COUNTY": "999", "FATALS": "99"},  # county=999 → skip
+]
+
+
+class TestNhtsaParseAccidentCsv:
+    def test_aggregates_fatalities_by_fips(self):
+        zip_bytes = _make_fars_zip(SAMPLE_ACCIDENT_ROWS)
+        result = parse_accident_csv(zip_bytes, 2022)
+        assert result["06037"] == 3
+        assert result["48113"] == 4
+
+    def test_skips_county_zero(self):
+        zip_bytes = _make_fars_zip(SAMPLE_ACCIDENT_ROWS)
+        result = parse_accident_csv(zip_bytes, 2022)
+        # county=0 produces fips "06000" which should not appear
+        assert "06000" not in result
+
+    def test_skips_county_999(self):
+        zip_bytes = _make_fars_zip(SAMPLE_ACCIDENT_ROWS)
+        result = parse_accident_csv(zip_bytes, 2022)
+        assert "06999" not in result
+
+    def test_fips_zero_padded(self):
+        zip_bytes = _make_fars_zip([{"STATE": "1", "COUNTY": "3", "FATALS": "1"}])
+        result = parse_accident_csv(zip_bytes, 2022)
+        assert "01003" in result
+
+    def test_bom_first_column(self):
+        # Simulate BOM on the STATE column name (as seen in real FARS ZIPs)
+        fieldnames = ["﻿STATE", "COUNTY", "FATALS"]
+        rows = [{"﻿STATE": "6", "COUNTY": "37", "FATALS": "5"}]
+        zip_bytes = _make_fars_zip(rows, fieldnames=fieldnames)
+        result = parse_accident_csv(zip_bytes, 2022)
+        assert result.get("06037") == 5
+
+    def test_missing_accident_csv_raises(self):
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            zf.writestr("other.csv", "nothing")
+        import pytest
+        with pytest.raises(ValueError, match="accident.csv not found"):
+            parse_accident_csv(buf.getvalue(), 2022)
+
+    def test_bad_row_skipped(self):
+        rows = [
+            {"STATE": "6", "COUNTY": "37", "FATALS": "2"},
+            {"STATE": "X", "COUNTY": "37", "FATALS": "1"},  # non-numeric STATE
+        ]
+        zip_bytes = _make_fars_zip(rows)
+        result = parse_accident_csv(zip_bytes, 2022)
+        assert result["06037"] == 2
+
+
+class TestNhtsaUpsert:
+    def _make_conn(self):
+        mock_conn = MagicMock()
+        mock_cur = MagicMock()
+        mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cur)
+        mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+        mock_cur.rowcount = 1
+        return mock_conn, mock_cur
+
+    def test_upserts_one_row_per_record(self):
+        conn, cur = self._make_conn()
+        records = [
+            {"fips": "06037", "year": 2022, "fatalities": 3, "fatality_rate": 2.5},
+            {"fips": "48113", "year": 2022, "fatalities": 4, "fatality_rate": 3.1},
+        ]
+        count = nhtsa_upsert(conn, records)
+        assert cur.execute.call_count == 2
+
+    def test_empty_records_returns_zero(self):
+        conn, cur = self._make_conn()
+        count = nhtsa_upsert(conn, [])
+        assert count == 0
+        cur.execute.assert_not_called()
+
+    def test_commits(self):
+        conn, cur = self._make_conn()
+        nhtsa_upsert(conn, [])
+        conn.commit.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Education Graduation Rates
+# ---------------------------------------------------------------------------
+
+from ingest_ed_graduation import _parse_rate, parse_acgr, upsert as grad_upsert
+
+SAMPLE_ACGR_CSV = """\
+SCHOOL_YEAR,STNAM,FIPST,LEAID,ST_LEAID,LEANM,CATEGORY,COHORT,RATE,DATE_CUR
+2020-2021,CALIFORNIA,06,0600001,CA-001,Los Angeles Unified,ALL,47000,82,01JUN22
+2020-2021,CALIFORNIA,06,0600001,CA-001,Los Angeles Unified,ECD,25000,74,01JUN22
+2020-2021,CALIFORNIA,06,0600001,CA-001,Los Angeles Unified,MBL,5000,PS,01JUN22
+2020-2021,CALIFORNIA,06,0600002,CA-002,Long Beach Unified,ALL,8000,88,01JUN22
+2020-2021,CALIFORNIA,06,0600002,CA-002,Long Beach Unified,ECD,4500,80-85,01JUN22
+2020-2021,TEXAS,48,4800001,TX-001,Houston ISD,ALL,30000,79,01JUN22
+2020-2021,TEXAS,48,4800001,TX-001,Houston ISD,ECD,18000,70,01JUN22
+2020-2021,ALASKA,02,0200001,AK-001,Anchorage SD,ALL,5000,85,01JUN22
+"""
+
+# Crosswalk: LEAID → county_fips (county codes must be in known_fips set)
+SAMPLE_CROSSWALK = {
+    "0600001": "06037",   # Los Angeles County
+    "0600002": "06037",   # Also LA County (different district, same county)
+    "4800001": "48201",   # Harris County
+    # 0200001 (Anchorage) intentionally not mapped → row should be skipped
+}
+
+KNOWN_FIPS = {"06037", "48201"}
+
+
+class TestEdParseRate:
+    def test_numeric_string(self):
+        assert _parse_rate("82") == 82.0
+
+    def test_float_string(self):
+        assert _parse_rate("82.5") == 82.5
+
+    def test_range_returns_none(self):
+        assert _parse_rate("80-85") is None
+
+    def test_suppressed_ps_returns_none(self):
+        assert _parse_rate("PS") is None
+
+    def test_ge50_returns_none(self):
+        assert _parse_rate("GE50") is None
+
+    def test_empty_string_returns_none(self):
+        assert _parse_rate("") is None
+
+    def test_whitespace_handled(self):
+        assert _parse_rate("  93  ") == 93.0
+
+
+class TestEdParseAcgr:
+    def test_known_counties_present(self):
+        records = parse_acgr(SAMPLE_ACGR_CSV, 2021, SAMPLE_CROSSWALK, KNOWN_FIPS)
+        fips_set = {r["fips"] for r in records}
+        assert "06037" in fips_set
+        assert "48201" in fips_set
+
+    def test_unknown_crosswalk_skipped(self):
+        records = parse_acgr(SAMPLE_ACGR_CSV, 2021, SAMPLE_CROSSWALK, KNOWN_FIPS)
+        fips_set = {r["fips"] for r in records}
+        # Anchorage (AK) is not in crosswalk → should not appear
+        assert all(r["fips"] in KNOWN_FIPS for r in records)
+
+    def test_cohort_weighted_rate(self):
+        records = parse_acgr(SAMPLE_ACGR_CSV, 2021, SAMPLE_CROSSWALK, KNOWN_FIPS)
+        la = next(r for r in records if r["fips"] == "06037")
+        # LA Unified: rate=82, cohort=47000; Long Beach: rate=88, cohort=8000
+        # weighted = (82*47000 + 88*8000) / (47000+8000) = (3854000 + 704000) / 55000 ≈ 82.9
+        expected = round((82 * 47000 + 88 * 8000) / (47000 + 8000), 1)
+        assert la["grad_rate_all"] == expected
+
+    def test_suppressed_rate_excluded_from_mean(self):
+        # MBL category is PS (suppressed) — only ALL and ECD are used anyway
+        # but ALL rate for 0600001 is numeric so it should be included
+        records = parse_acgr(SAMPLE_ACGR_CSV, 2021, SAMPLE_CROSSWALK, KNOWN_FIPS)
+        la = next(r for r in records if r["fips"] == "06037")
+        assert la["grad_rate_all"] is not None
+
+    def test_range_rate_excluded_from_ecd_mean(self):
+        # Long Beach ECD rate is "80-85" (a range) → excluded from mean
+        # Only LA Unified ECD (74, cohort 25000) contributes to county ECD rate
+        records = parse_acgr(SAMPLE_ACGR_CSV, 2021, SAMPLE_CROSSWALK, KNOWN_FIPS)
+        la = next(r for r in records if r["fips"] == "06037")
+        assert la["grad_rate_ecd"] == 74.0
+
+    def test_num_districts_counted(self):
+        records = parse_acgr(SAMPLE_ACGR_CSV, 2021, SAMPLE_CROSSWALK, KNOWN_FIPS)
+        la = next(r for r in records if r["fips"] == "06037")
+        assert la["num_districts"] == 2
+
+    def test_school_year_set(self):
+        records = parse_acgr(SAMPLE_ACGR_CSV, 2021, SAMPLE_CROSSWALK, KNOWN_FIPS)
+        for r in records:
+            assert r["school_year"] == 2021
+
+    def test_empty_csv_returns_empty(self):
+        header = "SCHOOL_YEAR,STNAM,FIPST,LEAID,ST_LEAID,LEANM,CATEGORY,COHORT,RATE,DATE_CUR\n"
+        records = parse_acgr(header, 2021, SAMPLE_CROSSWALK, KNOWN_FIPS)
+        assert records == []
+
+
+class TestEdUpsert:
+    def _make_conn(self):
+        mock_conn = MagicMock()
+        mock_cur = MagicMock()
+        mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cur)
+        mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+        mock_cur.rowcount = 1
+        return mock_conn, mock_cur
+
+    def test_upserts_one_row_per_record(self):
+        conn, cur = self._make_conn()
+        records = [
+            {"fips": "06037", "school_year": 2021, "grad_rate_all": 82.9,
+             "grad_rate_ecd": 74.0, "cohort_all": 55000, "num_districts": 2},
+            {"fips": "48201", "school_year": 2021, "grad_rate_all": 79.0,
+             "grad_rate_ecd": 70.0, "cohort_all": 30000, "num_districts": 1},
+        ]
+        grad_upsert(conn, records)
+        assert cur.execute.call_count == 2
+
+    def test_empty_records_no_execute(self):
+        conn, cur = self._make_conn()
+        grad_upsert(conn, [])
+        cur.execute.assert_not_called()
+
+    def test_commits(self):
+        conn, cur = self._make_conn()
+        grad_upsert(conn, [])
         conn.commit.assert_called_once()

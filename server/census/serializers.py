@@ -2,7 +2,8 @@ from rest_framework import serializers
 from .models import (
     Dataset,
     GeoEntity, CensusAcs5, AggNationalSummary, AggStateSummary, AggRanking, AggYoY,
-    CdcPlaces, BlsLaus, UsdaFoodEnv, EpaAqi, FbiCrime, CountyProfile,
+    CdcPlaces, BlsLaus, UsdaFoodEnv, EpaAqi, FbiCrime, HudFmr, EiaEnergy,
+    NhtsaTraffic, EdGraduation, CountyProfile,
 )
 
 
@@ -179,6 +180,44 @@ class FbiCrimeSerializer(serializers.ModelSerializer):
         ]
 
 
+class HudFmrSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = HudFmr
+        fields = [
+            "fips", "year",
+            "fmr_0br", "fmr_1br", "fmr_2br", "fmr_3br", "fmr_4br",
+            "fetched_at",
+        ]
+
+
+class NhtsaTrafficSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = NhtsaTraffic
+        fields = ["fips", "year", "fatalities", "fatality_rate", "fetched_at"]
+
+
+class EiaEnergySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = EiaEnergy
+        fields = [
+            "state_fips", "year",
+            "elec_res_bbtu", "elec_com_bbtu", "elec_ind_bbtu", "elec_total_bbtu",
+            "gas_res_bbtu", "gas_com_bbtu", "gas_ind_bbtu", "gas_total_bbtu",
+            "fetched_at",
+        ]
+
+
+class EdGraduationSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = EdGraduation
+        fields = [
+            "fips", "school_year",
+            "grad_rate_all", "grad_rate_ecd",
+            "cohort_all", "num_districts",
+            "fetched_at",
+        ]
+
+
 class CountyProfileSerializer(serializers.ModelSerializer):
     class Meta:
         model = CountyProfile
@@ -199,4 +238,7 @@ class CountyProfileSerializer(serializers.ModelSerializer):
             "hazardous_days", "pm25_days", "ozone_days",
             "crime_year", "violent_crimes", "violent_crime_rate",
             "property_crimes", "property_crime_rate",
+            "traffic_year", "fatalities", "fatality_rate",
+            "hud_year", "fmr_0br", "fmr_1br", "fmr_2br", "fmr_3br", "fmr_4br",
+            "grad_year", "grad_rate_all", "grad_rate_ecd", "cohort_all", "num_districts",
         ]

@@ -4,7 +4,8 @@ from rest_framework.exceptions import ValidationError
 from .models import (
     Dataset,
     GeoEntity, CensusAcs5, AggNationalSummary, AggStateSummary, AggRanking, AggYoY,
-    CdcPlaces, BlsLaus, UsdaFoodEnv, EpaAqi, FbiCrime, CountyProfile,
+    CdcPlaces, BlsLaus, UsdaFoodEnv, EpaAqi, FbiCrime, HudFmr, EiaEnergy,
+    NhtsaTraffic, EdGraduation, CountyProfile,
 )
 from .serializers import (
     DatasetSerializer,
@@ -12,7 +13,8 @@ from .serializers import (
     AggNationalSummarySerializer, AggStateSummarySerializer,
     AggRankingSerializer, AggYoYSerializer,
     CdcPlacesSerializer, BlsLausSerializer, UsdaFoodEnvSerializer,
-    EpaAqiSerializer, FbiCrimeSerializer, CountyProfileSerializer,
+    EpaAqiSerializer, FbiCrimeSerializer, HudFmrSerializer, EiaEnergySerializer,
+    NhtsaTrafficSerializer, EdGraduationSerializer, CountyProfileSerializer,
 )
 
 VALID_GEO_TYPES = {"state", "county"}
@@ -292,6 +294,75 @@ class FbiCrimeView(generics.ListAPIView):
             qs = qs.filter(fips__startswith=state_fips)
         if year is not None:
             qs = qs.filter(year=year)
+        return qs
+
+
+class NhtsaTrafficView(generics.ListAPIView):
+    """GET /api/traffic/  — optional ?fips, ?state_fips, ?year"""
+    serializer_class = NhtsaTrafficSerializer
+
+    def get_queryset(self):
+        qs = NhtsaTraffic.objects.all()
+        fips = self.request.query_params.get("fips")
+        state_fips = self.request.query_params.get("state_fips")
+        year = _validate_year(self.request.query_params.get("year"))
+        if fips:
+            qs = qs.filter(fips=fips)
+        if state_fips:
+            qs = qs.filter(fips__startswith=state_fips)
+        if year is not None:
+            qs = qs.filter(year=year)
+        return qs
+
+
+class EiaEnergyView(generics.ListAPIView):
+    """GET /api/energy/  — optional ?state_fips, ?year"""
+    serializer_class = EiaEnergySerializer
+
+    def get_queryset(self):
+        qs = EiaEnergy.objects.all()
+        state_fips = self.request.query_params.get("state_fips")
+        year = _validate_year(self.request.query_params.get("year"))
+        if state_fips:
+            qs = qs.filter(state_fips=state_fips)
+        if year is not None:
+            qs = qs.filter(year=year)
+        return qs
+
+
+class HudFmrView(generics.ListAPIView):
+    """GET /api/housing/  — optional ?fips, ?state_fips, ?year"""
+    serializer_class = HudFmrSerializer
+
+    def get_queryset(self):
+        qs = HudFmr.objects.all()
+        fips = self.request.query_params.get("fips")
+        state_fips = self.request.query_params.get("state_fips")
+        year = _validate_year(self.request.query_params.get("year"))
+        if fips:
+            qs = qs.filter(fips=fips)
+        if state_fips:
+            qs = qs.filter(fips__startswith=state_fips)
+        if year is not None:
+            qs = qs.filter(year=year)
+        return qs
+
+
+class EdGraduationView(generics.ListAPIView):
+    """GET /api/graduation/  — optional ?fips, ?state_fips, ?school_year"""
+    serializer_class = EdGraduationSerializer
+
+    def get_queryset(self):
+        qs = EdGraduation.objects.all()
+        fips = self.request.query_params.get("fips")
+        state_fips = self.request.query_params.get("state_fips")
+        school_year = _validate_year(self.request.query_params.get("school_year"))
+        if fips:
+            qs = qs.filter(fips=fips)
+        if state_fips:
+            qs = qs.filter(fips__startswith=state_fips)
+        if school_year is not None:
+            qs = qs.filter(school_year=school_year)
         return qs
 
 

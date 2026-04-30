@@ -5,7 +5,7 @@ from django.db import connection
 from census.models import (
     Dataset,
     GeoEntity, CensusAcs5, AggNationalSummary, AggStateSummary, AggRanking, AggYoY,
-    CdcPlaces, BlsLaus, UsdaFoodEnv, EpaAqi, FbiCrime, CountyProfile,
+    CdcPlaces, BlsLaus, UsdaFoodEnv, EpaAqi, FbiCrime, HudFmr, EiaEnergy, NhtsaTraffic, EdGraduation, CountyProfile,
 )
 
 
@@ -1000,6 +1000,76 @@ class FbiCrimeAPITest(TestCase):
         self.assertIn("year", resp.json())
 
 
+class HudFmrAPITest(TestCase):
+    """Tests for /api/housing/."""
+
+    @classmethod
+    def setUpClass(cls):
+        with connection.schema_editor() as editor:
+            editor.create_model(GeoEntity)
+            editor.create_model(HudFmr)
+        super().setUpClass()
+
+    @classmethod
+    def tearDownClass(cls):
+        super().tearDownClass()
+        with connection.schema_editor() as editor:
+            editor.delete_model(HudFmr)
+            editor.delete_model(GeoEntity)
+
+    @classmethod
+    def setUpTestData(cls):
+        GeoEntity.objects.create(fips="06037", geo_type="county",
+                                 name="Los Angeles County, California", state_fips="06")
+        GeoEntity.objects.create(fips="48201", geo_type="county",
+                                 name="Harris County, Texas", state_fips="48")
+        HudFmr.objects.create(fips="06037", year=2023,
+                              fmr_0br=2079, fmr_1br=2328, fmr_2br=2903, fmr_3br=3681, fmr_4br=4098)
+        HudFmr.objects.create(fips="06037", year=2022,
+                              fmr_0br=1900, fmr_1br=2100, fmr_2br=2600, fmr_3br=3400, fmr_4br=3900)
+        HudFmr.objects.create(fips="48201", year=2023,
+                              fmr_0br=990, fmr_1br=1080, fmr_2br=1320, fmr_3br=1720, fmr_4br=2050)
+
+    def test_housing_returns_all(self):
+        resp = self.client.get("/api/housing/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()["count"], 3)
+
+    def test_housing_filter_fips(self):
+        resp = self.client.get("/api/housing/?fips=06037")
+        data = resp.json()
+        self.assertEqual(data["count"], 2)
+        for r in data["results"]:
+            self.assertEqual(r["fips"], "06037")
+
+    def test_housing_filter_state_fips(self):
+        resp = self.client.get("/api/housing/?state_fips=48")
+        data = resp.json()
+        self.assertEqual(data["count"], 1)
+        self.assertEqual(data["results"][0]["fips"], "48201")
+
+    def test_housing_filter_year(self):
+        resp = self.client.get("/api/housing/?year=2023")
+        self.assertEqual(resp.json()["count"], 2)
+
+    def test_housing_fields(self):
+        resp = self.client.get("/api/housing/?fips=06037&year=2023")
+        r = resp.json()["results"][0]
+        for field in ["fips", "year", "fmr_0br", "fmr_1br", "fmr_2br", "fmr_3br", "fmr_4br"]:
+            self.assertIn(field, r)
+
+    def test_housing_values(self):
+        resp = self.client.get("/api/housing/?fips=06037&year=2023")
+        r = resp.json()["results"][0]
+        self.assertEqual(r["fmr_0br"], 2079)
+        self.assertEqual(r["fmr_2br"], 2903)
+
+    def test_housing_invalid_year_returns_400(self):
+        resp = self.client.get("/api/housing/?year=notanumber")
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn("year", resp.json())
+
+
 class DatasetCatalogAPITest(TestCase):
     """Tests for /api/datasets/."""
 
@@ -1067,3 +1137,219 @@ class DatasetCatalogAPITest(TestCase):
         resp = self.client.get("/api/datasets/")
         results = {r["source_key"]: r for r in resp.json()["results"]}
         self.assertIsNone(results["cdc_places"]["null_rates"])
+
+
+class EiaEnergyAPITest(TestCase):
+    """Tests for /api/energy/."""
+
+    @classmethod
+    def setUpClass(cls):
+        with connection.schema_editor() as editor:
+            editor.create_model(GeoEntity)
+            editor.create_model(EiaEnergy)
+        super().setUpClass()
+
+    @classmethod
+    def tearDownClass(cls):
+        super().tearDownClass()
+        with connection.schema_editor() as editor:
+            editor.delete_model(EiaEnergy)
+            editor.delete_model(GeoEntity)
+
+    @classmethod
+    def setUpTestData(cls):
+        GeoEntity.objects.create(fips="06", geo_type="state", name="California", state_fips="06")
+        GeoEntity.objects.create(fips="48", geo_type="state", name="Texas", state_fips="48")
+        EiaEnergy.objects.create(
+            state_fips="06", year=2022,
+            elec_res_bbtu=305518, elec_com_bbtu=371095, elec_ind_bbtu=162354, elec_total_bbtu=843617,
+            gas_res_bbtu=464763, gas_com_bbtu=248273, gas_ind_bbtu=743728, gas_total_bbtu=2172757,
+        )
+        EiaEnergy.objects.create(
+            state_fips="48", year=2022,
+            elec_res_bbtu=600000, elec_com_bbtu=400000, elec_ind_bbtu=500000, elec_total_bbtu=1500000,
+            gas_res_bbtu=300000, gas_com_bbtu=200000, gas_ind_bbtu=800000, gas_total_bbtu=1300000,
+        )
+        EiaEnergy.objects.create(
+            state_fips="06", year=2021,
+            elec_res_bbtu=290000, elec_com_bbtu=360000, elec_ind_bbtu=155000, elec_total_bbtu=810000,
+            gas_res_bbtu=450000, gas_com_bbtu=240000, gas_ind_bbtu=720000, gas_total_bbtu=2100000,
+        )
+
+    def test_energy_returns_all(self):
+        resp = self.client.get("/api/energy/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()["count"], 3)
+
+    def test_energy_filter_state_fips(self):
+        resp = self.client.get("/api/energy/?state_fips=06")
+        data = resp.json()
+        self.assertEqual(data["count"], 2)
+        for r in data["results"]:
+            self.assertEqual(r["state_fips"], "06")
+
+    def test_energy_filter_year(self):
+        resp = self.client.get("/api/energy/?year=2022")
+        self.assertEqual(resp.json()["count"], 2)
+
+    def test_energy_fields(self):
+        resp = self.client.get("/api/energy/?state_fips=06&year=2022")
+        r = resp.json()["results"][0]
+        for field in ["state_fips", "year",
+                      "elec_res_bbtu", "elec_com_bbtu", "elec_ind_bbtu", "elec_total_bbtu",
+                      "gas_res_bbtu", "gas_com_bbtu", "gas_ind_bbtu", "gas_total_bbtu"]:
+            self.assertIn(field, r)
+
+    def test_energy_values(self):
+        resp = self.client.get("/api/energy/?state_fips=06&year=2022")
+        r = resp.json()["results"][0]
+        self.assertEqual(r["elec_total_bbtu"], 843617)
+        self.assertEqual(r["gas_res_bbtu"], 464763)
+
+    def test_energy_invalid_year_returns_400(self):
+        resp = self.client.get("/api/energy/?year=notanumber")
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn("year", resp.json())
+
+
+class NhtsaTrafficAPITest(TestCase):
+    """Tests for /api/traffic/."""
+
+    @classmethod
+    def setUpClass(cls):
+        with connection.schema_editor() as editor:
+            editor.create_model(GeoEntity)
+            editor.create_model(NhtsaTraffic)
+        super().setUpClass()
+
+    @classmethod
+    def tearDownClass(cls):
+        super().tearDownClass()
+        with connection.schema_editor() as editor:
+            editor.delete_model(NhtsaTraffic)
+            editor.delete_model(GeoEntity)
+
+    @classmethod
+    def setUpTestData(cls):
+        GeoEntity.objects.create(fips="06037", geo_type="county",
+                                 name="Los Angeles County, California", state_fips="06")
+        GeoEntity.objects.create(fips="48201", geo_type="county",
+                                 name="Harris County, Texas", state_fips="48")
+        NhtsaTraffic.objects.create(fips="06037", year=2022, fatalities=866, fatality_rate="8.6")
+        NhtsaTraffic.objects.create(fips="06037", year=2021, fatalities=820, fatality_rate="8.2")
+        NhtsaTraffic.objects.create(fips="48201", year=2022, fatalities=558, fatality_rate="11.8")
+
+    def test_traffic_returns_all(self):
+        resp = self.client.get("/api/traffic/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()["count"], 3)
+
+    def test_traffic_filter_fips(self):
+        resp = self.client.get("/api/traffic/?fips=06037")
+        data = resp.json()
+        self.assertEqual(data["count"], 2)
+        for r in data["results"]:
+            self.assertEqual(r["fips"], "06037")
+
+    def test_traffic_filter_state_fips(self):
+        resp = self.client.get("/api/traffic/?state_fips=48")
+        data = resp.json()
+        self.assertEqual(data["count"], 1)
+        self.assertEqual(data["results"][0]["fips"], "48201")
+
+    def test_traffic_filter_year(self):
+        resp = self.client.get("/api/traffic/?year=2022")
+        self.assertEqual(resp.json()["count"], 2)
+
+    def test_traffic_fields(self):
+        resp = self.client.get("/api/traffic/?fips=06037&year=2022")
+        r = resp.json()["results"][0]
+        for field in ["fips", "year", "fatalities", "fatality_rate"]:
+            self.assertIn(field, r)
+
+    def test_traffic_values(self):
+        resp = self.client.get("/api/traffic/?fips=06037&year=2022")
+        r = resp.json()["results"][0]
+        self.assertEqual(r["fatalities"], 866)
+        self.assertEqual(r["fatality_rate"], "8.6")
+
+    def test_traffic_invalid_year_returns_400(self):
+        resp = self.client.get("/api/traffic/?year=notanumber")
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn("year", resp.json())
+
+
+class EdGraduationAPITest(TestCase):
+    """Tests for /api/graduation/."""
+
+    @classmethod
+    def setUpClass(cls):
+        with connection.schema_editor() as editor:
+            editor.create_model(GeoEntity)
+            editor.create_model(EdGraduation)
+        super().setUpClass()
+
+    @classmethod
+    def tearDownClass(cls):
+        super().tearDownClass()
+        with connection.schema_editor() as editor:
+            editor.delete_model(EdGraduation)
+            editor.delete_model(GeoEntity)
+
+    @classmethod
+    def setUpTestData(cls):
+        GeoEntity.objects.create(fips="06037", geo_type="county",
+                                 name="Los Angeles County, California", state_fips="06")
+        GeoEntity.objects.create(fips="48201", geo_type="county",
+                                 name="Harris County, Texas", state_fips="48")
+        EdGraduation.objects.create(fips="06037", school_year=2021,
+                                    grad_rate_all="82.5", grad_rate_ecd="75.0",
+                                    cohort_all=45000, num_districts=28)
+        EdGraduation.objects.create(fips="06037", school_year=2020,
+                                    grad_rate_all="81.0", grad_rate_ecd="74.0",
+                                    cohort_all=44000, num_districts=28)
+        EdGraduation.objects.create(fips="48201", school_year=2021,
+                                    grad_rate_all="79.3", grad_rate_ecd="71.2",
+                                    cohort_all=30000, num_districts=15)
+
+    def test_graduation_returns_all(self):
+        resp = self.client.get("/api/graduation/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()["count"], 3)
+
+    def test_graduation_filter_fips(self):
+        resp = self.client.get("/api/graduation/?fips=06037")
+        data = resp.json()
+        self.assertEqual(data["count"], 2)
+        for r in data["results"]:
+            self.assertEqual(r["fips"], "06037")
+
+    def test_graduation_filter_state_fips(self):
+        resp = self.client.get("/api/graduation/?state_fips=48")
+        data = resp.json()
+        self.assertEqual(data["count"], 1)
+        self.assertEqual(data["results"][0]["fips"], "48201")
+
+    def test_graduation_filter_school_year(self):
+        resp = self.client.get("/api/graduation/?school_year=2021")
+        self.assertEqual(resp.json()["count"], 2)
+
+    def test_graduation_fields(self):
+        resp = self.client.get("/api/graduation/?fips=06037&school_year=2021")
+        r = resp.json()["results"][0]
+        for field in ["fips", "school_year", "grad_rate_all", "grad_rate_ecd",
+                      "cohort_all", "num_districts"]:
+            self.assertIn(field, r)
+
+    def test_graduation_values(self):
+        resp = self.client.get("/api/graduation/?fips=06037&school_year=2021")
+        r = resp.json()["results"][0]
+        self.assertEqual(r["grad_rate_all"], "82.5")
+        self.assertEqual(r["grad_rate_ecd"], "75.0")
+        self.assertEqual(r["cohort_all"], 45000)
+        self.assertEqual(r["num_districts"], 28)
+
+    def test_graduation_invalid_year_returns_400(self):
+        resp = self.client.get("/api/graduation/?school_year=notanumber")
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn("year", resp.json())
