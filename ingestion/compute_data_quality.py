@@ -91,21 +91,32 @@ def compute_quality(conn, table: str, metric_cols: list[str]) -> tuple[int, dict
     return row_count, null_rates
 
 
-def update_catalog(conn, source_key: str, row_count: int, null_rates: dict) -> None:
+def get_last_fetched(conn, table: str) -> datetime | None:
+    """Return MAX(fetched_at) from the source table, or None if table is empty."""
+    with conn.cursor() as cur:
+        cur.execute(f"SELECT MAX(fetched_at) FROM {table}")  # noqa: S608
+        val = cur.fetchone()[0]
+    return val
+
+
+def update_catalog(conn, source_key: str, table: str, row_count: int, null_rates: dict) -> None:
+    import json
+    last_ingested = get_last_fetched(conn, table)
     sql = """
         UPDATE datasets
         SET row_count           = %(row_count)s,
             null_rates          = %(null_rates)s::jsonb,
-            quality_computed_at = %(now)s
+            quality_computed_at = %(now)s,
+            last_ingested_at    = COALESCE(%(last_ingested)s, last_ingested_at)
         WHERE source_key = %(source_key)s
     """
-    import json
     with conn.cursor() as cur:
         cur.execute(sql, {
-            "source_key": source_key,
-            "row_count":  row_count,
-            "null_rates": json.dumps(null_rates),
-            "now":        datetime.now(timezone.utc),
+            "source_key":    source_key,
+            "row_count":     row_count,
+            "null_rates":    json.dumps(null_rates),
+            "now":           datetime.now(timezone.utc),
+            "last_ingested": last_ingested,
         })
     conn.commit()
 
@@ -115,7 +126,7 @@ def run(conn) -> None:
         log.info("Computing quality for %s (%s)...", source_key, table)
         try:
             row_count, null_rates = compute_quality(conn, table, metric_cols)
-            update_catalog(conn, source_key, row_count, null_rates)
+            update_catalog(conn, source_key, table, row_count, null_rates)
             log.info("  %s: %d rows, null rates: %s", source_key, row_count,
                      {k: f"{v:.1%}" if v is not None else "n/a"
                       for k, v in null_rates.items()})
