@@ -921,8 +921,11 @@ class TestEdParseRate:
     def test_float_string(self):
         assert _parse_rate("82.5") == 82.5
 
-    def test_range_returns_none(self):
-        assert _parse_rate("80-85") is None
+    def test_range_returns_midpoint(self):
+        assert _parse_rate("80-85") == 82.5
+
+    def test_range_90_94(self):
+        assert _parse_rate("90-94") == 92.0
 
     def test_suppressed_ps_returns_none(self):
         assert _parse_rate("PS") is None
@@ -965,12 +968,14 @@ class TestEdParseAcgr:
         la = next(r for r in records if r["fips"] == "06037")
         assert la["grad_rate_all"] is not None
 
-    def test_range_rate_excluded_from_ecd_mean(self):
-        # Long Beach ECD rate is "80-85" (a range) → excluded from mean
-        # Only LA Unified ECD (74, cohort 25000) contributes to county ECD rate
+    def test_range_rate_included_as_midpoint_in_ecd_mean(self):
+        # Long Beach ECD rate is "80-85" → midpoint 82.5, cohort 4500
+        # LA Unified ECD rate is 74, cohort 25000
+        # weighted = (74*25000 + 82.5*4500) / (25000+4500)
         records = parse_acgr(SAMPLE_ACGR_CSV, 2021, SAMPLE_CROSSWALK, KNOWN_FIPS)
         la = next(r for r in records if r["fips"] == "06037")
-        assert la["grad_rate_ecd"] == 74.0
+        expected = round((74 * 25000 + 82.5 * 4500) / (25000 + 4500), 1)
+        assert la["grad_rate_ecd"] == expected
 
     def test_num_districts_counted(self):
         records = parse_acgr(SAMPLE_ACGR_CSV, 2021, SAMPLE_CROSSWALK, KNOWN_FIPS)

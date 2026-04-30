@@ -111,14 +111,26 @@ def build_crosswalk(session: requests.Session) -> dict[str, str]:
 
 
 def _parse_rate(rate_str: str) -> float | None:
-    """Parse EDFacts RATE value to float, returning None for suppressed/range values."""
+    """Parse EDFacts RATE value to float.
+
+    Handles exact values ("82"), ranges ("80-85" → midpoint 82.5),
+    and returns None for fully suppressed values ("PS", "GE50", etc.).
+    """
     s = rate_str.strip()
     if not s:
         return None
     try:
         return float(s)
     except ValueError:
-        return None
+        pass
+    if "-" in s:
+        parts = s.split("-", 1)
+        try:
+            lo, hi = float(parts[0]), float(parts[1])
+            return (lo + hi) / 2
+        except ValueError:
+            pass
+    return None
 
 
 def download_acgr(session: requests.Session, year: int) -> str:
@@ -246,15 +258,18 @@ def _load_known_fips(conn) -> set[str]:
         return {r[0] for r in cur.fetchall()}
 
 
-def ingest(conn, years: list[int] | None = None) -> int:
+def ingest(conn, years: list[int] | None = None, force: bool = False) -> int:
     if years is None:
         years = DEFAULT_YEARS
 
-    already = get_already_ingested(conn, years)
-    years_todo = [y for y in years if not any(y == pair[1] for pair in already)]
-    if not years_todo:
-        log.info("All requested years already ingested — skipping.")
-        return 0
+    if force:
+        years_todo = years
+    else:
+        already = get_already_ingested(conn, years)
+        years_todo = [y for y in years if not any(y == pair[1] for pair in already)]
+        if not years_todo:
+            log.info("All requested years already ingested — skipping.")
+            return 0
 
     known_fips = _load_known_fips(conn)
     log.info("Building LEAID→county crosswalk from Urban Institute API...")
@@ -277,6 +292,8 @@ def ingest(conn, years: list[int] | None = None) -> int:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--years", nargs="+", type=int, default=DEFAULT_YEARS)
+    parser.add_argument("--force", action="store_true",
+                        help="Re-ingest even if years already loaded")
     args = parser.parse_args()
 
     conn = psycopg2.connect(
@@ -287,7 +304,7 @@ if __name__ == "__main__":
         password=os.environ.get("DB_PASSWORD", ""),
     )
     try:
-        total = ingest(conn, args.years)
+        total = ingest(conn, args.years, force=args.force)
         log.info("Total upserted: %d rows", total)
         log.info("Done.")
     finally:
