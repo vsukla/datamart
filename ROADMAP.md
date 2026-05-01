@@ -30,7 +30,7 @@ Core architecture, Census data, first external sources, dashboard.
 
 ## Phase 2 — Geographic Expansion ✅
 
-Added 2 new county/state datasets, range filters, automation, and bug fixes.
+Added 6 new county/state datasets, range filters, automation, and bug fixes.
 
 ### 2a — Environment & Safety
 
@@ -38,14 +38,14 @@ Added 2 new county/state datasets, range filters, automation, and bug fixes.
 |---|---|---|
 | EPA Air Quality Index — `/api/aqi/` | ✅ | ZIP+CSV per year; 11 AQI metrics; FIPS matched by normalized county name |
 | FBI Crime Data — `/api/crime/` | ✅ | ZIP+CSV per year; agency rows aggregated to county; violent + property rates |
-| NHTSA Traffic Fatalities — `/api/traffic/` | ⬜ | FARS dataset; fatalities per 100k pop |
+| NHTSA Traffic Fatalities — `/api/traffic/` | ✅ | FARS dataset; fatalities + rate per 100k pop; migration 013 |
 
 ### 2b — Housing & Economy
 
 | Item | Status | Notes |
 |---|---|---|
-| HUD Fair Market Rents — `/api/housing/` | ⬜ | Annual FMR by bedroom count per county |
-| EIA Energy Consumption — `/api/energy/` | ⬜ | State-level; electricity + gas by sector |
+| HUD Fair Market Rents — `/api/housing/` | ✅ | Annual FMR by bedroom count (0–4BR) per county; migration 011 |
+| EIA Energy Consumption — `/api/energy/` | ✅ | State-level; electricity + gas BBTU by sector; migration 012 |
 
 ### 2c — Health (deeper)
 
@@ -58,14 +58,14 @@ Added 2 new county/state datasets, range filters, automation, and bug fixes.
 
 | Item | Status | Notes |
 |---|---|---|
-| Dept of Education graduation rates — `/api/education/` | ⬜ | State-level; district-to-county crosswalk |
+| Dept of Education graduation rates — `/api/education/` | ✅ | EDFacts 4-year ACGR; LEAID→county_fips via Urban Institute crosswalk; migration 014 |
 
 ### 2e — Bug Fixes, Filters & Tests
 
 | Item | Status | Notes |
 |---|---|---|
 | Fix `fast_food_per_1000` — was using full-service restaurant column | ✅ | Issue #24; corrected to `FFRPTH16` |
-| BLS LAUS: switch to BLS Public Data API (flat files blocked by Akamai) | ⚠️ | Issue #23/#26; BLS_API_KEY required — see #26 |
+| BLS LAUS: switch to BLS Public Data API (flat files blocked by Akamai) | ✅ | Issue #23 closed; BLS_API_KEY required; 16,103 rows loaded |
 | Range filters on `/api/estimates/` (e.g. `pct_poverty__gte=20`) | ✅ | Issue #14; 12 supported metrics |
 | Tests for cross-source dashboard features | ✅ | Issue #25; scatter, county table, health/food ranking |
 | EPA air quality + FBI crime fields in county profile | ✅ | Both sources in `county_profile` view + `/api/profile/` |
@@ -87,7 +87,7 @@ Infrastructure to make adding new datasets fast and reliable.
 | Additional Census variables (health insurance, commute, race) | ✅ | Issue #15; migration 010; 6 new columns in `census_acs5` |
 | Ingestion failure alerting (GitHub issue or webhook) | ⬜ | |
 
-**291 tests** (up from 177 at Phase 1 close).
+**365 tests** (up from 177 at Phase 1 close).
 
 ---
 
@@ -124,40 +124,33 @@ Extend beyond county/state. Each new entity type links back to FIPS.
 
 Pick up here next session.
 
-### #26 — BLS LAUS ✅ Complete
-
-16,103 rows loaded (3,220 counties × 5 years). Three bugs fixed during first run:
-1. Series ID had 7 zeros instead of 8 (`LAUCN{fips}0000000{m}` → `00000000{m}`)
-2. BLS API returns max 50 series per response in practice (not documented 500); batch reduced to 50
-3. M13 (official annual average) not published for all counties; falls back to mean of M01–M12
-
-### #27 — FBI Crime: needs schema redesign before next run
+### #26 — FBI Crime: needs redesign before next run
 
 | Field | Value |
 |---|---|
 | File | `ingestion/ingest_fbi_crime.py` |
 | API key | ✅ `FBI_API_KEY` added to `config/.env` |
-| State endpoint confirmed useless | `GET /summarized/state/{state}/violent-crime` returns ONLY 2 entries: `"{State} Offenses"` and `"{State} Clearances"` — no per-agency breakdown |
-| FBI CDE API was 503 | Server unavailable when we tried to count agencies across all states |
-| Current approach in code | Calls state offense endpoint then bets on per-agency entries — will produce 0 rows |
-| **Design needed** | Per-ORI calls are the only way. Size: ~18k agencies × 2 crime types × 5 years = ~180k calls. Impractical at 1000/hr rate limit. Better options: (a) get NIBRS bulk extract if FBI publishes one, (b) fetch only NIBRS-participating agencies (most are NIBRS since 2022), (c) accept only ~50% county coverage from those agencies that do report. |
-| Next step | When FBI CDE API is back up: count total agencies and NIBRS-participating agencies across all 51 states; then decide on acceptable approach |
+| State endpoint confirmed useless | Returns ONLY 2 entries per state (offenses + clearances) — no per-agency breakdown |
+| **Design needed** | Per-ORI calls: ~18k agencies × 2 types × 5 years = ~180k calls; impractical at 1000/hr. Options: (a) NIBRS bulk extract, (b) NIBRS-participating agencies only (~50% coverage), (c) wait for better API |
+| Next step | When FBI CDE API is back up: count agencies across all 51 states; pick approach |
 | Current DB | 0 rows |
 
-### #28 — BLS LAUS Item #23 in backlog is stale
-
-| Field | Value |
-|---|---|
-| Issue | Issue #23 was marked "✅ Closed" for switching to flat-file, but flat files are now blocked |
-| Action | Reopen / relabel as "switched to BLS API (key required)" once #26 is confirmed working |
-
-### #29 — `mean_commute_minutes` NULL for ~9,000 Census rows
+### #27 — `mean_commute_minutes` NULL for ~9,000 Census rows
 
 | Field | Value |
 |---|---|
 | Cause | B08136 (aggregate travel time) is suppressed by Census for small/rural counties |
 | Impact | ~56% of rows (mostly small counties) have `mean_commute_minutes = NULL` |
-| Decision needed | Accept NULLs as expected, or find an alternative variable (B08135 per-mode, or ACS5 subject table) |
+| Decision needed | Accept NULLs as expected, or find an alternative (B08135 per-mode or ACS5 subject table S0801) |
+
+### #28 — Load data for Phase 2 sources
+
+| Source | Command | DB status |
+|---|---|---|
+| HUD Fair Market Rents | `python ingestion/ingest_hud_fmr.py --start 2018 --end 2022` | 0 rows |
+| EIA Energy Consumption | `python ingestion/ingest_eia_energy.py --start 2018 --end 2022` | 0 rows |
+| NHTSA Traffic Fatalities | `python ingestion/ingest_nhtsa_traffic.py --start 2018 --end 2022` | 0 rows |
+| Education Graduation Rates | `python ingestion/ingest_ed_graduation.py --start 2018 --end 2022` | 0 rows |
 
 ---
 
@@ -173,13 +166,12 @@ Issues tracked in GitHub: https://github.com/vsukla/datamart/issues
 | #17 | Token-based auth + rate limiting | 5 | ⬜ Open |
 | #18 | Schedule compute_aggregates.py via GitHub Actions | 3 | ✅ Closed |
 | #22 | Cross-source dynamic query API `/api/query/` | 5 | ⬜ Open |
-| #23 | BLS LAUS: switch to flat-file download | 2e | ⚠️ Stale — flat files now blocked, see #26 |
-| #24 | Fix `fast_food_per_1000` column | data quality | ✅ Closed |
+| #23 | BLS LAUS: switch to flat-file download | 2e | ✅ Closed — flat files blocked; switched to BLS API |
+| #24 | Fix `fast_food_per_1000` column | 2e | ✅ Closed |
 | #25 | Tests for cross-source dashboard features | 2e | ✅ Closed |
-| #26 | BLS LAUS: register BLS_API_KEY and re-run ingestion | immediate | ✅ Done |
-| #27 | FBI Crime: redesign around per-ORI API calls; FBI CDE was 503 | immediate | ⬜ Open |
-| #28 | Reopen/relabel issue #23 once BLS API ingestion confirmed | immediate | ⬜ Open |
-| #29 | Census `mean_commute_minutes` NULL for small counties — accept or fix | data quality | ⬜ Open |
+| #26 | FBI Crime: redesign ingestion around per-ORI API calls | immediate | ⬜ Open |
+| #27 | Census `mean_commute_minutes` NULL for small counties — accept or fix | data quality | ⬜ Open |
+| #28 | Load data for Phase 2 sources (HUD, EIA, NHTSA, Education) | immediate | ⬜ Open |
 
 ---
 

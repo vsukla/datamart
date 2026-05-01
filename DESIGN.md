@@ -2,7 +2,7 @@
 
 ## Overview
 
-Datamart is a Data-as-a-Service platform that consolidates publicly available datasets into normalized, queryable PostgreSQL tables and exposes them through a REST API and an interactive web dashboard. The platform covers U.S. Census Bureau data at state and county level, extended with county-level health, labor, food environment, air quality, and crime data from CDC PLACES, BLS LAUS, USDA Food Environment Atlas, EPA AQS, and FBI Crime Data Explorer.
+Datamart is a Data-as-a-Service platform that consolidates publicly available datasets into normalized, queryable PostgreSQL tables and exposes them through a REST API and an interactive web dashboard. The platform covers U.S. Census Bureau data at state and county level, extended with county-level health, labor, food environment, air quality, crime, housing, energy, traffic, and education data from CDC PLACES, BLS LAUS, USDA Food Environment Atlas, EPA AQS, FBI Crime Data Explorer, HUD, EIA, NHTSA, and the Department of Education.
 
 The platform has two layers:
 
@@ -20,18 +20,26 @@ flowchart LR
         S4([USDA Food Env])
         S5([EPA AQS])
         S6([FBI CDE])
+        S7([HUD])
+        S8([EIA])
+        S9([NHTSA FARS])
+        S10([Dept of Education])
     end
 
     subgraph pipeline ["Ingestion Pipeline"]
         I1[census_acs5.py]
         I2[compute_aggregates.py\nnightly batch]
         I3[ingest_cdc_places.py]
-        I4[ingest_bls_laus.py\nflat-file]
+        I4[ingest_bls_laus.py]
         I5[ingest_usda_food_env.py]
         I6[ingest_epa_aqi.py]
         I7[ingest_fbi_crime.py]
         I8[compute_data_quality.py\nnightly batch]
         I9[base.py\nBaseIngestion]
+        I10[ingest_hud_fmr.py]
+        I11[ingest_eia_energy.py]
+        I12[ingest_nhtsa_traffic.py]
+        I13[ingest_ed_graduation.py]
     end
 
     subgraph store ["PostgreSQL — datamart"]
@@ -43,6 +51,10 @@ flowchart LR
         U[(usda_food_env)]
         Q[(epa_aqi)]
         F[(fbi_crime)]
+        H[(hud_fmr)]
+        N[(eia_energy)]
+        T[(nhtsa_traffic)]
+        ED[(ed_graduation)]
         DS[(datasets)]
         CV[(county_profile VIEW)]
     end
@@ -59,7 +71,11 @@ flowchart LR
         V9["GET /api/crime/"]
         V10["GET /api/profile/"]
         V11["GET /api/datasets/"]
-        V12["GET /dashboard/"]
+        V12["GET /api/housing/"]
+        V13["GET /api/energy/"]
+        V14["GET /api/traffic/"]
+        V15["GET /api/education/"]
+        V16["GET /dashboard/"]
     end
 
     C([API Consumers])
@@ -71,7 +87,11 @@ flowchart LR
     S4 --> I5
     S5 --> I6
     S6 --> I7
-    I9 -.->|"extends"| I4 & I6 & I7
+    S7 --> I10
+    S8 --> I11
+    S9 --> I12
+    S10 --> I13
+    I9 -.->|"extends"| I4 & I6 & I7 & I10 & I11 & I12 & I13
     I1 --> G & E
     I2 --> A
     I3 --> P
@@ -79,21 +99,29 @@ flowchart LR
     I5 --> U
     I6 --> Q
     I7 --> F
+    I10 --> H
+    I11 --> N
+    I12 --> T
+    I13 --> ED
     I8 --> DS
-    G & E & A & P & B & U & Q & F --> CV
+    G & E & A & P & B & U & Q & F & H & T & ED --> CV
     G & E --> V1 & V2 & V3
-    A --> V4 & V12
+    A --> V4 & V16
     P --> V5
     B --> V6
     U --> V7
     Q --> V8
     F --> V9
+    H --> V12
+    N --> V13
+    T --> V14
+    ED --> V15
     CV --> V10
     DS --> V11
-    G --> V12
-    DS --> V12
-    V1 & V2 & V3 & V4 & V5 & V6 & V7 & V8 & V9 & V10 & V11 --> C
-    V12 --> D
+    G --> V16
+    DS --> V16
+    V1 & V2 & V3 & V4 & V5 & V6 & V7 & V8 & V9 & V10 & V11 & V12 & V13 & V14 & V15 --> C
+    V16 --> D
 ```
 
 ---
@@ -118,7 +146,11 @@ datamart/
 │   ├── ingest_bls_laus.py            # BLS LAUS unemployment (flat-file download)
 │   ├── ingest_usda_food_env.py       # USDA Food Environment Atlas (Excel file)
 │   ├── ingest_epa_aqi.py             # EPA Air Quality Index (ZIP+CSV per year)
-│   └── ingest_fbi_crime.py           # FBI Crime Data Explorer (ZIP+CSV per year)
+│   ├── ingest_fbi_crime.py           # FBI Crime Data Explorer (ZIP+CSV per year)
+│   ├── ingest_hud_fmr.py             # HUD Fair Market Rents (annual Excel per county)
+│   ├── ingest_eia_energy.py          # EIA energy consumption (state-level, BBTU)
+│   ├── ingest_nhtsa_traffic.py       # NHTSA FARS traffic fatalities (county-level)
+│   └── ingest_ed_graduation.py       # EDFacts graduation rates (LEAID→county crosswalk)
 ├── schema/
 │   └── schema.sql                    # Canonical DDL — all tables + county_profile view
 ├── migrations/
@@ -133,6 +165,10 @@ datamart/
 │   ├── 008_fbi_crime.sql
 │   ├── 009_datasets_catalog.sql
 │   ├── 010_census_additional_vars.sql
+│   ├── 011_hud_fmr.sql
+│   ├── 012_eia_energy.sql
+│   ├── 013_nhtsa_traffic.sql
+│   ├── 014_ed_graduation.sql
 │   └── migrate.sh
 ├── requirements.txt
 ├── server/
@@ -315,6 +351,61 @@ Annual violent and property crime rates from FBI Crime Data Explorer. One row pe
 
 Downloaded from: `https://cde.ucr.cjis.gov/LATEST/webapp/assets/data/county_{year}.zip`. Multiple agency rows per county are aggregated by summing, then rates are computed.
 
+#### `hud_fmr`
+
+Annual Fair Market Rents from HUD. One row per county × year. Unique on `(fips, year)`.
+
+| Column    | Type    | Notes                         |
+|-----------|---------|-------------------------------|
+| `fips`    | VARCHAR(5) FK | Links to `geo_entities` |
+| `year`    | SMALLINT | FMR year                     |
+| `fmr_0br` | INTEGER | Studio FMR ($/month)         |
+| `fmr_1br` | INTEGER | 1-bedroom FMR                |
+| `fmr_2br` | INTEGER | 2-bedroom FMR                |
+| `fmr_3br` | INTEGER | 3-bedroom FMR                |
+| `fmr_4br` | INTEGER | 4-bedroom FMR                |
+
+#### `eia_energy`
+
+Annual energy consumption from EIA. One row per state × year (state-level only). Unique on `(state_fips, year)`.
+
+| Column           | Type    | Notes                               |
+|------------------|---------|-------------------------------------|
+| `state_fips`     | CHAR(2) FK | Links to `geo_entities`          |
+| `year`           | SMALLINT |                                    |
+| `elec_res_bbtu`  | INTEGER | Residential electricity (BBTU)     |
+| `elec_com_bbtu`  | INTEGER | Commercial electricity             |
+| `elec_ind_bbtu`  | INTEGER | Industrial electricity             |
+| `elec_total_bbtu`| INTEGER | Total electricity                  |
+| `gas_res_bbtu`   | INTEGER | Residential natural gas (BBTU)     |
+| `gas_com_bbtu`   | INTEGER | Commercial natural gas             |
+| `gas_ind_bbtu`   | INTEGER | Industrial natural gas             |
+| `gas_total_bbtu` | INTEGER | Total natural gas                  |
+
+#### `nhtsa_traffic`
+
+Annual traffic fatality counts from NHTSA FARS. One row per county × year. Unique on `(fips, year)`.
+
+| Column          | Type         | Notes                            |
+|-----------------|--------------|----------------------------------|
+| `fips`          | VARCHAR(5) FK | Links to `geo_entities`         |
+| `year`          | SMALLINT     |                                  |
+| `fatalities`    | INTEGER      | Total traffic fatalities         |
+| `fatality_rate` | NUMERIC(6,1) | Fatalities per 100,000 pop       |
+
+#### `ed_graduation`
+
+4-year adjusted cohort graduation rates from EDFacts. Aggregated from district (LEAID) to county via Urban Institute school directory crosswalk. One row per county × school year. Unique on `(fips, school_year)`.
+
+| Column          | Type         | Notes                                    |
+|-----------------|--------------|------------------------------------------|
+| `fips`          | VARCHAR(5) FK | Links to `geo_entities`                 |
+| `school_year`   | SMALLINT     | Ending year of the school year           |
+| `grad_rate_all` | NUMERIC(5,1) | ACGR — all students (%)                 |
+| `grad_rate_ecd` | NUMERIC(5,1) | ACGR — economically disadvantaged (%)   |
+| `cohort_all`    | INTEGER      | Total cohort size                        |
+| `num_districts` | SMALLINT     | Number of districts aggregated           |
+
 #### `datasets`
 
 Source catalog — one row per ingested data source. Updated by ingestion scripts (`mark_ingested`) and `compute_data_quality.py`.
@@ -436,6 +527,48 @@ Downloads the annual county-level CSV (inside a ZIP) from FBI Crime Data Explore
 python ingestion/ingest_fbi_crime.py [--start 2018] [--end 2022]
 ```
 
+**Note:** Current approach produces 0 rows — needs redesign around per-ORI API calls or NIBRS bulk extract (see issue #26).
+
+### HUD Fair Market Rents
+
+Source: [ingestion/ingest_hud_fmr.py](ingestion/ingest_hud_fmr.py)
+
+Downloads the annual HUD FMR Excel file for each year. Parses bedroom-count FMR columns and maps county-level FIPS from the HUD dataset. Upserts into `hud_fmr`. Extends `BaseIngestion`.
+
+```bash
+python ingestion/ingest_hud_fmr.py [--start 2018] [--end 2022]
+```
+
+### EIA Energy Consumption
+
+Source: [ingestion/ingest_eia_energy.py](ingestion/ingest_eia_energy.py)
+
+Downloads state-level energy consumption data from the EIA. Extracts electricity and natural gas BBTU by sector (residential, commercial, industrial). State-level only (no county breakdown available). Upserts into `eia_energy`. Extends `BaseIngestion`.
+
+```bash
+python ingestion/ingest_eia_energy.py [--start 2018] [--end 2022]
+```
+
+### NHTSA Traffic Fatalities
+
+Source: [ingestion/ingest_nhtsa_traffic.py](ingestion/ingest_nhtsa_traffic.py)
+
+Downloads the NHTSA FARS (Fatality Analysis Reporting System) county-level file. Computes fatality rate per 100,000 population using Census population data. Upserts into `nhtsa_traffic`. Extends `BaseIngestion`.
+
+```bash
+python ingestion/ingest_nhtsa_traffic.py [--start 2018] [--end 2022]
+```
+
+### Education Graduation Rates
+
+Source: [ingestion/ingest_ed_graduation.py](ingestion/ingest_ed_graduation.py)
+
+Downloads EDFacts 4-year Adjusted Cohort Graduation Rate (ACGR) data from the Department of Education. Aggregates district-level (LEAID) data to county level via the Urban Institute school directory crosswalk. Reports rates for all students and economically disadvantaged students separately. Upserts into `ed_graduation`. Extends `BaseIngestion`.
+
+```bash
+python ingestion/ingest_ed_graduation.py [--start 2018] [--end 2022]
+```
+
 ---
 
 ## API Layer
@@ -489,7 +622,19 @@ EPA Air Quality Index annual summary. Params: `fips`, `state_fips`, `year`.
 FBI violent and property crime rates. Params: `fips`, `state_fips`, `year`.
 
 #### `GET /api/profile/`
-Unified county profile joining all six sources (most recent year per source). Params: `fips`, `state_fips`. Backed by the `county_profile` view.
+Unified county profile joining all sources (most recent year per source). Params: `fips`, `state_fips`. Backed by the `county_profile` view.
+
+#### `GET /api/housing/`
+HUD Fair Market Rents by bedroom count per county. Params: `fips`, `state_fips`, `year`.
+
+#### `GET /api/energy/`
+EIA state-level energy consumption (electricity and natural gas BBTU by sector). Params: `state_fips`, `year`.
+
+#### `GET /api/traffic/`
+NHTSA FARS annual traffic fatalities and rate per 100k population per county. Params: `fips`, `state_fips`, `year`.
+
+#### `GET /api/education/`
+EDFacts 4-year ACGR graduation rates per county (all students and economically disadvantaged). Params: `fips`, `state_fips`, `school_year`.
 
 #### `GET /api/datasets/`
 Source catalog with quality stats for all ingested datasets. Returns `source_key`, `name`, `row_count`, `null_rates`, `last_ingested_at`, `quality_computed_at`.
@@ -592,13 +737,13 @@ Run with:
 python -m pytest tests/ -v
 ```
 
-**291 tests total.**
+**365 tests total.**
 
-### test_ingestion.py — 50 unit tests
+### test_ingestion.py — 47 unit tests
 
 Pure Python, no database. Covers Census ACS5 ingestion helpers: `_int()`, `_pct()`, `_mean_commute()`, `normalize_state()` (including all new health/commute/race fields), `normalize_county()`, `_fetch()` (mocked HTTP), and `load()` (mocked psycopg2).
 
-### test_api.py — 140 Django integration tests
+### test_api.py — 148 Django integration tests
 
 Uses Django's `TestCase` with a real PostgreSQL test database. All `managed = False` tables are created via `connection.schema_editor()`. Test classes:
 
@@ -609,14 +754,18 @@ Uses Django's `TestCase` with a real PostgreSQL test database. All `managed = Fa
 - **`CountyProfileAPITest`** — `/api/profile/`: all six source fields present (including EPA AQI and FBI crime), filter params, pagination
 - **`EpaAqiAPITest`** — `/api/aqi/`: filter params, all 11 AQI metric fields
 - **`FbiCrimeAPITest`** — `/api/crime/`: filter params, all crime rate fields
-- **`DatasetCatalogAPITest`** — `/api/datasets/`: all six sources, row_count, null_rates fields
+- **`HudFmrAPITest`** — `/api/housing/`: filter params, all bedroom-count FMR fields
+- **`EiaEnergyAPITest`** — `/api/energy/`: filter params, all electricity/gas sector fields
+- **`NhtsaTrafficAPITest`** — `/api/traffic/`: filter params, fatality count and rate fields
+- **`EdGraduationAPITest`** — `/api/education/`: filter params, ACGR fields for all students and economically disadvantaged
+- **`DatasetCatalogAPITest`** — `/api/datasets/`: all sources, row_count, null_rates fields
 - **Range filter tests** in `GeoAPITest` — `__gte`, `__lte`, invalid metric rejection, multi-param combination
 
 ### test_aggregates.py — 30 unit tests
 
 Pure Python. Covers `compute_aggregates.py` SQL builder functions: UNION ALL count, metric literals, window functions, transaction order.
 
-### test_external_ingestion.py — 52 unit tests
+### test_external_ingestion.py — 112 unit tests
 
 Pure Python, no database or HTTP. Covers:
 
@@ -625,6 +774,10 @@ Pure Python, no database or HTTP. Covers:
 - **USDA Food Env** — `_safe()`, `load_workbook_data()`, `upsert()`
 - **EPA AQI** — `normalize_county()`, `parse_aqi_csv()`, `match_to_fips()`, `upsert()`
 - **FBI Crime** — `parse_crime_csv()` (agency aggregation, rate computation, zero-population handling), `upsert()`
+- **HUD FMR** — `parse()`, `upsert()`, bedroom-count columns, FIPS mapping
+- **EIA Energy** — `parse()`, `upsert()`, sector BBTU columns, state-level entity mapping
+- **NHTSA Traffic** — `parse()`, `upsert()`, fatality rate computation, zero-population guard
+- **Education Graduation** — `parse()`, `upsert()`, district aggregation, range value handling, crosswalk matching
 
 ### test_data_quality.py — 9 unit tests
 
@@ -666,7 +819,7 @@ Use `schema/schema.sql` to set up a brand-new database in one shot:
 psql "$DB_URL" -f schema/schema.sql
 ```
 
-This creates all tables and the `county_profile` view, and pre-populates `schema_migrations` so the migration runner knows they've been applied (currently through migration 010).
+This creates all tables and the `county_profile` view, and pre-populates `schema_migrations` so the migration runner knows they've been applied (currently through migration 014).
 
 ### Incremental migrations
 
@@ -685,6 +838,10 @@ migrations/
   008_fbi_crime.sql              # fbi_crime table + updated county_profile view
   009_datasets_catalog.sql       # datasets catalog table (seeded with 6 sources)
   010_census_additional_vars.sql # census_acs5 health/commute/race columns + updated view
+  011_hud_fmr.sql                # hud_fmr table + updated county_profile view
+  012_eia_energy.sql             # eia_energy table (state-level)
+  013_nhtsa_traffic.sql          # nhtsa_traffic table + updated county_profile view
+  014_ed_graduation.sql          # ed_graduation table + updated county_profile view
   migrate.sh                     # runner: applies pending migrations in order
 ```
 
