@@ -1,0 +1,533 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>County Statistical Profile — Datamart</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <style>
+    body { background: #f8f9fa; font-size: 0.875rem; }
+    .navbar-brand { letter-spacing: -0.5px; }
+
+    .domain-card { border: none; border-radius: 10px; }
+    .domain-score { font-size: 2rem; font-weight: 700; line-height: 1; }
+    .domain-label { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 700; }
+
+    .pct-row { display: grid; grid-template-columns: 185px 1fr 62px 140px; gap: 10px; align-items: center; padding: 5px 0; }
+    .pct-row:not(:last-child) { border-bottom: 1px solid #f0f0f0; }
+    .pct-name { font-size: 0.79rem; color: #444; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .pct-bar-wrap { position: relative; height: 14px; background: #e9ecef; border-radius: 7px; overflow: visible; }
+    .pct-bar-fill { height: 100%; border-radius: 7px; }
+    .pct-median-line { position: absolute; top: -3px; bottom: -3px; left: 50%; width: 2px; background: #555; opacity: 0.35; border-radius: 1px; }
+    .pct-value { font-size: 0.75rem; color: #333; font-weight: 600; text-align: right; white-space: nowrap; }
+    .pct-national { font-size: 0.68rem; color: #999; text-align: right; white-space: nowrap; }
+    .pct-badge { font-size: 0.69rem; font-weight: 700; padding: 2px 7px; border-radius: 10px; text-align: center; white-space: nowrap; }
+    .pct-badge.top { background: #d1fae5; color: #064e3b; }
+    .pct-badge.high { background: #dbeafe; color: #1e3a8a; }
+    .pct-badge.mid { background: #fef9c3; color: #713f12; }
+    .pct-badge.low { background: #ffedd5; color: #7c2d12; }
+    .pct-badge.bot { background: #fee2e2; color: #7f1d1d; }
+
+    .domain-section-header { font-size: 0.64rem; text-transform: uppercase; letter-spacing: 1px; font-weight: 700; padding: 10px 0 4px; color: #6c757d; border-bottom: 2px solid #e5e7eb; margin-bottom: 4px; }
+
+    .outlier-card { border: none; border-radius: 8px; padding: 10px 14px; margin-bottom: 8px; }
+    .outlier-card.strength { background: #d1fae5; border-left: 4px solid #10b981; }
+    .outlier-card.weakness { background: #fee2e2; border-left: 4px solid #ef4444; }
+    .outlier-metric { font-weight: 600; font-size: 0.8rem; }
+    .outlier-delta { font-size: 0.7rem; color: #555; margin-top: 2px; }
+
+    .peer-bar { height: 8px; border-radius: 4px; background: #e9ecef; }
+    .peer-fill { height: 100%; border-radius: 4px; background: #6366f1; }
+
+    .corr-pos { color: #10b981; font-weight: 700; }
+    .corr-neg { color: #ef4444; font-weight: 700; }
+    .corr-neu { color: #6c757d; }
+
+    .section-card { border: none; border-radius: 12px; box-shadow: 0 1px 4px rgba(0,0,0,0.08); }
+    .section-card .card-header { background: #fff; border-bottom: 1px solid #f0f0f0; border-radius: 12px 12px 0 0 !important; padding: 11px 16px; }
+
+    .county-hero { background: linear-gradient(135deg, #1e3a5f 0%, #2563eb 100%); color: white; border-radius: 12px; padding: 18px 24px; }
+    .county-hero .fips-badge { background: rgba(255,255,255,0.18); border-radius: 6px; padding: 2px 8px; font-size: 0.68rem; font-family: monospace; }
+
+    canvas#radarChart { max-height: 330px; }
+  </style>
+</head>
+<body>
+
+<!-- Navbar -->
+<nav class="navbar navbar-dark bg-dark px-4 py-2">
+  <a class="navbar-brand fw-bold fs-6" href="#">Datamart</a>
+  <div class="d-flex gap-3 align-items-center">
+    <a class="text-white-50 text-decoration-none small" href="#">Dashboard</a>
+    <a class="text-white text-decoration-none small fw-semibold border-bottom border-primary pb-1" href="#">County Profile</a>
+    <a class="text-white-50 text-decoration-none small" href="#">API</a>
+    <a class="text-white-50 text-decoration-none small" href="#">Datasets</a>
+  </div>
+</nav>
+
+<div class="container-fluid px-4 py-3" style="max-width:1400px;">
+
+  <!-- Page title + selectors -->
+  <div class="row align-items-start mb-3">
+    <div class="col">
+      <h5 class="fw-bold mb-1">County Statistical Profile</h5>
+      <p class="text-muted mb-0" style="font-size:0.77rem;">
+        See how every attribute of a county compares nationally — identify outliers, explore cross-attribute patterns, and find statistical peers.
+      </p>
+    </div>
+    <div class="col-auto d-flex gap-2 align-items-center pt-1">
+      <select class="form-select form-select-sm" style="width:175px;"><option>North Carolina</option></select>
+      <select class="form-select form-select-sm" style="width:225px;"><option>Mecklenburg County</option></select>
+      <select class="form-select form-select-sm" style="width:95px;"><option>2022</option></select>
+      <button class="btn btn-primary btn-sm px-3">Load</button>
+    </div>
+  </div>
+
+  <!-- County hero -->
+  <div class="county-hero mb-3">
+    <div class="row align-items-center">
+      <div class="col">
+        <div class="d-flex align-items-center gap-2 mb-1">
+          <h5 class="mb-0 fw-bold">Mecklenburg County, North Carolina</h5>
+          <span class="fips-badge">FIPS 37119</span>
+        </div>
+        <div class="d-flex gap-4" style="font-size:0.77rem;opacity:0.85;">
+          <span>Population: <strong>1,115,482</strong></span>
+          <span>Charlotte metro</span>
+          <span>18 metrics · 7 data sources · vintages 2018–2022</span>
+        </div>
+      </div>
+      <div class="col-auto text-end">
+        <div style="font-size:0.67rem;opacity:0.65;text-transform:uppercase;letter-spacing:0.5px;">Overall Rank</div>
+        <div style="font-size:2.6rem;font-weight:700;line-height:1.1;">63<span style="font-size:1rem;opacity:0.7;">rd</span></div>
+        <div style="font-size:0.67rem;opacity:0.65;">of 3,231 counties</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Domain score cards -->
+  <div class="row g-2 mb-3">
+    <div class="col">
+      <div class="card domain-card h-100 p-3" style="background:#eff6ff;">
+        <div class="domain-label mb-1" style="color:#1d4ed8;">Economy</div>
+        <div class="domain-score" style="color:#1e40af;">67<span style="font-size:0.85rem;font-weight:400;">th</span></div>
+        <div style="font-size:0.67rem;color:#3b82f6;margin-top:4px;">↑ Income, moderate poverty</div>
+      </div>
+    </div>
+    <div class="col">
+      <div class="card domain-card h-100 p-3" style="background:#f0fdf4;">
+        <div class="domain-label mb-1" style="color:#166534;">Education</div>
+        <div class="domain-score" style="color:#15803d;">79<span style="font-size:0.85rem;font-weight:400;">th</span></div>
+        <div style="font-size:0.67rem;color:#16a34a;margin-top:4px;">↑ High bachelor's attainment</div>
+      </div>
+    </div>
+    <div class="col">
+      <div class="card domain-card h-100 p-3" style="background:#fefce8;">
+        <div class="domain-label mb-1" style="color:#854d0e;">Health</div>
+        <div class="domain-score" style="color:#a16207;">56<span style="font-size:0.85rem;font-weight:400;">th</span></div>
+        <div style="font-size:0.67rem;color:#ca8a04;margin-top:4px;">↓ Below avg. health insurance</div>
+      </div>
+    </div>
+    <div class="col">
+      <div class="card domain-card h-100 p-3" style="background:#f5f3ff;">
+        <div class="domain-label mb-1" style="color:#5b21b6;">Housing</div>
+        <div class="domain-score" style="color:#6d28d9;">61<span style="font-size:0.85rem;font-weight:400;">st</span></div>
+        <div style="font-size:0.67rem;color:#7c3aed;margin-top:4px;">↑ High values, low ownership</div>
+      </div>
+    </div>
+    <div class="col">
+      <div class="card domain-card h-100 p-3" style="background:#ecfeff;">
+        <div class="domain-label mb-1" style="color:#164e63;">Environment</div>
+        <div class="domain-score" style="color:#0e7490;">61<span style="font-size:0.85rem;font-weight:400;">st</span></div>
+        <div style="font-size:0.67rem;color:#0891b2;margin-top:4px;">↑ Above-median air quality</div>
+      </div>
+    </div>
+    <div class="col">
+      <div class="card domain-card h-100 p-3" style="background:#fdf4ff;">
+        <div class="domain-label mb-1" style="color:#6b21a8;">Safety</div>
+        <div class="domain-score" style="color:#7e22ce;">78<span style="font-size:0.85rem;font-weight:400;">th</span></div>
+        <div style="font-size:0.67rem;color:#9333ea;margin-top:4px;">↑ Low traffic fatality rate</div>
+      </div>
+    </div>
+    <div class="col">
+      <div class="card domain-card h-100 p-3" style="background:#fdf2f8;">
+        <div class="domain-label mb-1" style="color:#9d174d;">Food</div>
+        <div class="domain-score" style="color:#be185d;">51<span style="font-size:0.85rem;font-weight:400;">st</span></div>
+        <div style="font-size:0.67rem;color:#db2777;margin-top:4px;">≈ Near national average</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Radar + Outliers -->
+  <div class="row g-3 mb-3">
+
+    <div class="col-md-5">
+      <div class="card section-card h-100">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <span class="fw-semibold">Domain Radar</span>
+          <span class="text-muted" style="font-size:0.7rem;">dashed ring = national median (50th)</span>
+        </div>
+        <div class="card-body d-flex align-items-center justify-content-center p-3">
+          <canvas id="radarChart"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-md-7">
+      <div class="card section-card h-100">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <span class="fw-semibold">Statistical Outliers</span>
+          <span class="text-muted" style="font-size:0.7rem;">Metrics furthest from the U.S. median</span>
+        </div>
+        <div class="card-body p-3">
+
+          <div style="font-size:0.66rem;text-transform:uppercase;letter-spacing:0.6px;color:#10b981;font-weight:700;margin-bottom:8px;">
+            ▲ Strengths — significantly outperforms national median
+          </div>
+          <div class="row g-2 mb-3">
+            <div class="col-md-6">
+              <div class="outlier-card strength">
+                <div class="d-flex justify-content-between align-items-start">
+                  <div class="outlier-metric">Bachelor's Degree+</div>
+                  <span class="badge" style="background:#d1fae5;color:#064e3b;">85th</span>
+                </div>
+                <div style="font-size:0.9rem;font-weight:700;color:#065f46;">43.1%</div>
+                <div class="outlier-delta">National median 21.3% — <strong>+21.8 pp above</strong></div>
+              </div>
+            </div>
+            <div class="col-md-6">
+              <div class="outlier-card strength">
+                <div class="d-flex justify-content-between align-items-start">
+                  <div class="outlier-metric">Traffic Fatality Rate</div>
+                  <span class="badge" style="background:#d1fae5;color:#064e3b;">78th</span>
+                </div>
+                <div style="font-size:0.9rem;font-weight:700;color:#065f46;">9.2 / 100k</div>
+                <div class="outlier-delta">National median 14.1 — <strong>−4.9 fewer fatalities</strong></div>
+              </div>
+            </div>
+            <div class="col-md-6">
+              <div class="outlier-card strength">
+                <div class="d-flex justify-content-between align-items-start">
+                  <div class="outlier-metric">Median Home Value</div>
+                  <span class="badge" style="background:#d1fae5;color:#064e3b;">77th</span>
+                </div>
+                <div style="font-size:0.9rem;font-weight:700;color:#065f46;">$318,400</div>
+                <div class="outlier-delta">National median $229,800 — <strong>+$88,600</strong></div>
+              </div>
+            </div>
+            <div class="col-md-6">
+              <div class="outlier-card strength">
+                <div class="d-flex justify-content-between align-items-start">
+                  <div class="outlier-metric">Median Household Income</div>
+                  <span class="badge" style="background:#d1fae5;color:#064e3b;">71st</span>
+                </div>
+                <div style="font-size:0.9rem;font-weight:700;color:#065f46;">$72,189</div>
+                <div class="outlier-delta">National median $58,200 — <strong>+$13,989</strong></div>
+              </div>
+            </div>
+          </div>
+
+          <div style="font-size:0.66rem;text-transform:uppercase;letter-spacing:0.6px;color:#ef4444;font-weight:700;margin-bottom:8px;">
+            ▼ Weaknesses — lags behind national median
+          </div>
+          <div class="row g-2">
+            <div class="col-md-6">
+              <div class="outlier-card weakness">
+                <div class="d-flex justify-content-between align-items-start">
+                  <div class="outlier-metric">Health Insurance Coverage</div>
+                  <span class="badge" style="background:#fee2e2;color:#7f1d1d;">34th</span>
+                </div>
+                <div style="font-size:0.9rem;font-weight:700;color:#991b1b;">87.0% insured</div>
+                <div class="outlier-delta">National median 91.4% — <strong>−4.4 pp gap</strong></div>
+              </div>
+            </div>
+            <div class="col-md-6">
+              <div class="outlier-card weakness">
+                <div class="d-flex justify-content-between align-items-start">
+                  <div class="outlier-metric">Owner-Occupied Rate</div>
+                  <span class="badge" style="background:#fee2e2;color:#7f1d1d;">33rd</span>
+                </div>
+                <div style="font-size:0.9rem;font-weight:700;color:#991b1b;">57.2% owned</div>
+                <div class="outlier-delta">National median 65.1% — <strong>−7.9 pp below</strong></div>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /radar+outliers -->
+
+  <!-- Attribute Fingerprint -->
+  <div class="card section-card mb-3">
+    <div class="card-header d-flex justify-content-between align-items-center">
+      <div>
+        <span class="fw-semibold">Attribute Fingerprint</span>
+        <span class="text-muted ms-2" style="font-size:0.71rem;">All 18 metrics · percentiles across 3,231 U.S. counties</span>
+      </div>
+      <div class="text-muted" style="font-size:0.69rem;">
+        For ↓better metrics (poverty, obesity…), percentile = share of counties with a <em>worse</em> value.
+        &nbsp;|&nbsp;
+        <span style="display:inline-block;width:2px;height:10px;background:#555;opacity:0.4;vertical-align:middle;border-radius:1px;"></span>
+        &nbsp;= national median
+      </div>
+    </div>
+    <div class="card-body px-4 py-3" id="fingerprintContainer"></div>
+  </div>
+
+  <!-- Peers + Correlations -->
+  <div class="row g-3 mb-4">
+
+    <div class="col-md-5">
+      <div class="card section-card h-100">
+        <div class="card-header">
+          <span class="fw-semibold">Statistical Peers</span>
+          <div class="text-muted mt-1" style="font-size:0.69rem;">Counties with the closest multi-attribute profile, ranked by Euclidean distance on 14 normalized metrics</div>
+        </div>
+        <div class="card-body p-0">
+          <table class="table table-sm table-hover mb-0" style="font-size:0.78rem;">
+            <thead class="table-light">
+              <tr>
+                <th class="ps-3">County</th>
+                <th>State</th>
+                <th style="width:150px;">Similarity</th>
+                <th class="pe-3 text-end">Pop.</th>
+              </tr>
+            </thead>
+            <tbody id="peersTable"></tbody>
+          </table>
+          <div class="px-3 py-2 text-muted" style="font-size:0.67rem;">Larger bar = closer statistical match. Distance on z-scores across all metrics.</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-md-7">
+      <div class="card section-card h-100">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <div>
+            <span class="fw-semibold">Cross-Attribute Correlations</span>
+            <div class="text-muted" style="font-size:0.69rem;">Among large metro counties (pop. ≥ 500k) — how attributes co-vary nationally</div>
+          </div>
+          <span class="badge bg-light text-dark border" style="font-size:0.64rem;">n = 127 counties</span>
+        </div>
+        <div class="card-body p-3">
+          <div class="row g-2" id="correlationsGrid"></div>
+          <div class="mt-2 text-muted" style="font-size:0.67rem;">
+            Pearson r computed across large metro counties.
+            <strong class="corr-pos ms-1">r &gt; 0.6</strong> = strong positive ·
+            <strong class="corr-neg ms-1">r &lt; −0.5</strong> = strong negative
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+</div><!-- /container -->
+
+<script>
+/* ── DATA ─────────────────────────────────────────────────────── */
+const METRICS = [
+  { domain:"Economy",     name:"Median Household Income",  val:"$72,189",  nat:"$58,200",  pct:71, inv:false },
+  { domain:"Economy",     name:"Poverty Rate",              val:"11.8%",   nat:"13.5%",    pct:58, inv:true  },
+  { domain:"Economy",     name:"Unemployment Rate",         val:"4.1%",    nat:"4.6%",     pct:52, inv:true  },
+
+  { domain:"Education",   name:"Bachelor's Degree +",       val:"43.1%",   nat:"21.3%",    pct:85, inv:false },
+  { domain:"Education",   name:"HS Graduation Rate",        val:"86.2%",   nat:"84.8%",    pct:61, inv:false },
+
+  { domain:"Health",      name:"Health Insurance Coverage", val:"87.0%",   nat:"91.4%",    pct:34, inv:false },
+  { domain:"Health",      name:"Obesity Rate",              val:"30.2%",   nat:"35.8%",    pct:68, inv:true  },
+  { domain:"Health",      name:"Diabetes Rate",             val:"9.8%",    nat:"11.4%",    pct:62, inv:true  },
+  { domain:"Health",      name:"Depression Rate",           val:"18.1%",   nat:"21.9%",    pct:71, inv:true  },
+
+  { domain:"Housing",     name:"Median Home Value",         val:"$318,400",nat:"$229,800", pct:77, inv:false },
+  { domain:"Housing",     name:"Owner-Occupied Rate",       val:"57.2%",   nat:"65.1%",    pct:33, inv:false },
+  { domain:"Housing",     name:"2BR Fair Market Rent",      val:"$1,380",  nat:"$987",     pct:74, inv:false },
+
+  { domain:"Environment", name:"Good AQI Days / Year",      val:"198 days",nat:"186 days", pct:63, inv:false },
+  { domain:"Environment", name:"Median AQI",                val:"42",      nat:"45",       pct:58, inv:true  },
+
+  { domain:"Food",        name:"Low Food Access",           val:"18.4%",   nat:"20.1%",    pct:55, inv:true  },
+  { domain:"Food",        name:"SNAP Recipients",           val:"12.1%",   nat:"13.8%",    pct:54, inv:true  },
+  { domain:"Food",        name:"Fast Food / 1,000 pop.",    val:"1.8",     nat:"1.7",      pct:44, inv:true  },
+
+  { domain:"Safety",      name:"Traffic Fatality Rate",     val:"9.2/100k",nat:"14.1/100k",pct:78, inv:true  },
+];
+
+const PEERS = [
+  { name:"Wake County",      state:"NC", pct:96, pop:"1,129,410" },
+  { name:"Fulton County",    state:"GA", pct:91, pop:"1,068,119" },
+  { name:"Durham County",    state:"NC", pct:87, pop:"338,917"   },
+  { name:"DeKalb County",    state:"GA", pct:83, pop:"772,035"   },
+  { name:"Guilford County",  state:"NC", pct:79, pop:"543,062"   },
+  { name:"Jefferson County", state:"AL", pct:75, pop:"674,721"   },
+];
+
+const CORRS = [
+  { a:"Income",          b:"Bachelor's Deg.",  r: 0.82, note:"Wealthy counties have more college graduates" },
+  { a:"Income",          b:"Health Insurance", r: 0.71, note:"Higher income → better coverage rates" },
+  { a:"Bachelor's Deg.", b:"Poverty Rate",     r:-0.74, note:"Education attainment inversely tracks poverty" },
+  { a:"Poverty Rate",    b:"Obesity Rate",     r: 0.67, note:"Economic stress correlates with health outcomes" },
+  { a:"Home Value",      b:"2BR Rent",         r: 0.89, note:"Very strong co-movement in housing costs" },
+  { a:"Home Value",      b:"Ownership Rate",   r:-0.58, note:"Expensive markets have lower homeownership" },
+  { a:"Income",          b:"Traffic Fatality", r:-0.63, note:"Dense/wealthy areas have safer roads" },
+  { a:"Education",       b:"Health Insurance", r: 0.61, note:"Educated counties show better coverage" },
+];
+
+const DOMAIN_COLORS = {
+  Economy:"#3b82f6", Education:"#10b981", Health:"#f59e0b",
+  Housing:"#6366f1", Environment:"#06b6d4", Food:"#ec4899", Safety:"#8b5cf6",
+};
+
+/* ── HELPERS ─────────────────────────────────────────────────── */
+function barColor(p) {
+  if (p >= 80) return "#10b981";
+  if (p >= 65) return "#22c55e";
+  if (p >= 50) return "#84cc16";
+  if (p >= 35) return "#f59e0b";
+  if (p >= 20) return "#f97316";
+  return "#ef4444";
+}
+
+function badgeClass(p) {
+  if (p >= 75) return "top";
+  if (p >= 60) return "high";
+  if (p >= 40) return "mid";
+  if (p >= 25) return "low";
+  return "bot";
+}
+
+/* ── FINGERPRINT ─────────────────────────────────────────────── */
+function renderFingerprint() {
+  const container = document.getElementById("fingerprintContainer");
+  const domains = [...new Set(METRICS.map(m => m.domain))];
+  let html = `<div style="margin-left:185px;padding-left:0;position:relative;height:14px;margin-bottom:2px;">
+    <span style="position:absolute;left:50%;transform:translateX(-50%);font-size:0.6rem;color:#888;">median</span>
+  </div>`;
+
+  domains.forEach(domain => {
+    const color = DOMAIN_COLORS[domain] || "#6c757d";
+    html += `<div class="domain-section-header" style="color:${color};">${domain}</div>`;
+    METRICS.filter(m => m.domain === domain).forEach(m => {
+      const bc = barColor(m.pct);
+      const cl = badgeClass(m.pct);
+      const note = m.inv ? `<span style="font-size:0.58rem;color:#aaa;"> ↓better</span>` : "";
+      html += `
+        <div class="pct-row">
+          <div class="pct-name">${m.name}${note}</div>
+          <div class="pct-bar-wrap">
+            <div class="pct-bar-fill" style="width:${m.pct}%;background:${bc};"></div>
+            <div class="pct-median-line"></div>
+          </div>
+          <div><span class="pct-badge ${cl}">${m.pct}th</span></div>
+          <div>
+            <div class="pct-value">${m.val}</div>
+            <div class="pct-national">nat. ${m.nat}</div>
+          </div>
+        </div>`;
+    });
+  });
+  container.innerHTML = html;
+}
+
+/* ── PEERS ───────────────────────────────────────────────────── */
+function renderPeers() {
+  document.getElementById("peersTable").innerHTML = PEERS.map(p => `
+    <tr>
+      <td class="ps-3 fw-medium">${p.name}</td>
+      <td><span class="badge bg-light text-dark border">${p.state}</span></td>
+      <td>
+        <div class="d-flex align-items-center gap-2">
+          <div class="peer-bar flex-grow-1"><div class="peer-fill" style="width:${p.pct}%;"></div></div>
+          <span style="font-size:0.7rem;min-width:30px;">${p.pct}%</span>
+        </div>
+      </td>
+      <td class="pe-3 text-end text-muted">${p.pop}</td>
+    </tr>`).join("");
+}
+
+/* ── CORRELATIONS ────────────────────────────────────────────── */
+function renderCorrelations() {
+  document.getElementById("correlationsGrid").innerHTML = CORRS.map(c => {
+    const pos = c.r > 0;
+    const strong = Math.abs(c.r) >= 0.6;
+    const bc = pos ? "#10b981" : "#ef4444";
+    const cls = strong ? (pos ? "corr-pos" : "corr-neg") : "corr-neu";
+    const barW = Math.abs(c.r) * 100;
+    const barStyle = pos
+      ? `width:${barW}%;`
+      : `width:${barW}%;margin-left:auto;`;
+    return `
+      <div class="col-md-6">
+        <div style="background:#f8f9fa;border-radius:8px;padding:10px 12px;">
+          <div class="d-flex justify-content-between align-items-center mb-1">
+            <div style="font-size:0.74rem;font-weight:600;">${c.a} × ${c.b}</div>
+            <div class="${cls}" style="font-size:0.82rem;">r = ${c.r.toFixed(2)}</div>
+          </div>
+          <div style="height:5px;background:#e5e7eb;border-radius:3px;margin-bottom:5px;">
+            <div style="height:100%;border-radius:3px;background:${bc};${barStyle}"></div>
+          </div>
+          <div style="font-size:0.67rem;color:#6c757d;">${c.note}</div>
+        </div>
+      </div>`;
+  }).join("");
+}
+
+/* ── RADAR ───────────────────────────────────────────────────── */
+function renderRadar() {
+  new Chart(document.getElementById("radarChart").getContext("2d"), {
+    type: "radar",
+    data: {
+      labels: ["Economy", "Education", "Health", "Housing", "Environment", "Safety", "Food"],
+      datasets: [
+        {
+          label: "Mecklenburg County",
+          data: [67, 79, 56, 61, 61, 78, 51],
+          backgroundColor: "rgba(37,99,235,0.12)",
+          borderColor: "#2563eb",
+          borderWidth: 2.5,
+          pointBackgroundColor: [67,79,56,61,61,78,51].map(barColor),
+          pointRadius: 5,
+          pointHoverRadius: 7,
+        },
+        {
+          label: "U.S. Median (50th)",
+          data: [50, 50, 50, 50, 50, 50, 50],
+          backgroundColor: "transparent",
+          borderColor: "#9ca3af",
+          borderWidth: 1.5,
+          borderDash: [4, 4],
+          pointRadius: 0,
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: true,
+      scales: {
+        r: {
+          min: 0, max: 100,
+          ticks: { stepSize: 25, font: { size: 9 }, color: "#9ca3af", backdropColor: "transparent" },
+          grid: { color: "#e5e7eb" },
+          angleLines: { color: "#e5e7eb" },
+          pointLabels: { font: { size: 11, weight: "600" }, color: "#374151" },
+        }
+      },
+      plugins: {
+        legend: { position: "bottom", labels: { font: { size: 11 }, boxWidth: 14, padding: 14 } },
+        tooltip: { callbacks: { label: ctx => ` ${ctx.dataset.label}: ${ctx.raw}th pct` } }
+      }
+    }
+  });
+}
+
+/* ── INIT ────────────────────────────────────────────────────── */
+renderFingerprint();
+renderPeers();
+renderCorrelations();
+renderRadar();
+</script>
+</body>
+</html>

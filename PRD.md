@@ -149,6 +149,39 @@ The FIPS-only model runs out of headroom when datasets key on non-geographic ent
 
 ---
 
+### Phase 3.5 — County Statistical Profile
+
+*A single-county deep-dive view exposing the full multi-source attribute fingerprint*
+
+**Problem:** The current dashboard supports one comparison at a time — you pick a metric, then compare counties on that metric. A researcher studying Mecklenburg County must switch metrics 18 times to understand its full profile. There is no view that answers: "Across everything we know about this county, where does it stand — and which of its attributes are anomalies?"
+
+**Solution:** A dedicated County Statistical Profile page that loads all attributes for one county simultaneously and presents them as a coherent statistical portrait.
+
+**Core interactions:**
+1. Select state → county → year → Load
+2. See domain scores (economy, education, health, housing, environment, safety, food) as percentile cards
+3. Radar chart comparing domain-level scores to the national median
+4. **Attribute Fingerprint** — every metric as a horizontal percentile bar, grouped by domain, color-coded green (strong) to red (weak), with national median line
+5. **Statistical Outliers** — top-N strengths and weaknesses (metrics furthest from median)
+6. **Statistical Peers** — counties with the most similar attribute profile, ranked by Euclidean distance on normalized metrics
+7. **Cross-attribute correlations** — how metrics co-move within a peer group (e.g., income × education r = 0.82)
+
+**Key design decisions:**
+- **Percentile direction normalization:** For metrics where lower = better (poverty, obesity, crime rate), the displayed percentile always means "better than X% of counties." This lets the fingerprint be read uniformly: a long bar is always good.
+- **Peer group for correlations:** Computed within a peer cohort (same urban/rural classification or population tier) so correlations are meaningful, not dominated by the rural/urban split.
+- **No new backend required at launch:** All data is already in `county_profile` view + individual source tables. Percentiles can be pre-computed via `agg_rankings` (already exists). Correlations are static, pre-computed from the full dataset.
+
+**New backend work needed:**
+- `GET /api/profile/<fips>/` — single-county full profile (exists already as `/api/profile/?fips=`)
+- `GET /api/stats/percentiles/` — percentile ranks for all metrics for a given fips × year (can derive from `agg_rankings`)
+- `GET /api/stats/peers/<fips>/` — top-N nearest neighbors by normalized Euclidean distance (new)
+- `GET /api/stats/correlations/` — pre-computed Pearson r matrix for a given peer group (new, computed offline)
+- New Django view at `/county-profile/`
+
+**Success criteria:** A researcher can type a county name, see its complete statistical portrait in under 3 seconds, identify its top 3 strengths and weaknesses, and find 5 similar counties — without writing any SQL.
+
+---
+
 ### Phase 5 — Query Layer and Developer Experience
 *Make Datamart a platform, not just a data store*
 
