@@ -258,6 +258,228 @@ The bottleneck is engineering time, not cloud cost.
 
 ---
 
+## Priority Dataset Catalog
+
+The datasets below are the highest-value targets — selected for geographic granularity
+(county or state), federal authorship, machine-readable format, active maintenance,
+and cross-domain join potential. Organized by domain; tiered by ingestion priority.
+
+**Tier 1** — ingest as soon as the pipeline is automated (high value, manageable complexity)  
+**Tier 2** — ingest in Phase D–E (high value, moderate complexity or large file size)  
+**Tier 3** — useful for specific verticals; ingest on demand
+
+---
+
+### Economy & Labor
+
+| Dataset | Agency | Level | Key Metrics | Format | Tier |
+|---|---|---|---|---|---|
+| **BEA Regional Economic Accounts** | Bureau of Economic Analysis | County + State | GDP by industry, personal income per capita, compensation | CSV/API | 1 |
+| **BLS QCEW** — Quarterly Census of Employment & Wages | BLS | County | Employment + wages by NAICS industry sector, establishment count | CSV | 1 |
+| **Census SAIPE** — Small Area Income & Poverty Estimates | Census Bureau | County | Annual poverty rate, median income — more current than ACS5 | CSV/API | 1 |
+| **IRS Statistics of Income** | IRS | ZIP→County | AGI, number of returns, income brackets, EITC recipients | CSV | 2 |
+| **SBA 7(a) and 504 Loan Data** | Small Business Administration | County | Loan count, dollar volume, industry, approval rate by county | CSV | 2 |
+| **FDIC Bank Branch Statistics** | FDIC | County | Number of bank branches, total deposits, bank deserts | CSV | 2 |
+| **USDA Rural-Urban Continuum Codes** | USDA ERS | County | Rural/urban classification (9-tier), metro adjacency | CSV | 1 |
+| **Fed Reserve Small Business Credit Survey** | Federal Reserve | State | Credit access, approval rates, fintech use | CSV | 3 |
+
+**BEA Regional:** `https://apps.bea.gov/regional/downloadzip.cfm` — county-level GDP and personal income going back to 2001. Probably the single most valuable dataset not yet ingested. GDP per capita alone makes county economic comparisons meaningful.
+
+**BLS QCEW:** `https://www.bls.gov/cew/downloadable-data.htm` — quarterly employment and wages by county × industry (NAICS). Enables questions like "which counties are manufacturing-dependent?" or "where are tech jobs growing?" Flat files, large (~2GB/year), but well-structured.
+
+---
+
+### Health & Healthcare
+
+| Dataset | Agency | Level | Key Metrics | Format | Tier |
+|---|---|---|---|---|---|
+| **CDC Wonder Mortality** | CDC | County | Deaths by cause (ICD-10), age-adjusted rates, years of life lost | API | 1 |
+| **CMS Medicare Geographic Variation** | CMS | County | Medicare spending per beneficiary, chronic condition prevalence, utilization | CSV | 1 |
+| **HRSA HPSA / MUA** — Shortage Areas | HRSA | County | Primary care, dental, mental health professional shortage designations | CSV/API | 1 |
+| **AHRQ Social Determinants of Health Database** | AHRQ | County | Compiled SDOH measures from 6 domains, 40+ variables | CSV | 1 |
+| **CDC Opioid Prescribing Rates** | CDC | County | Opioid prescriptions per 100 persons, high-dosage rates | CSV | 1 |
+| **SAMHSA Treatment Locator / N-SSATS** | SAMHSA | County | Substance use treatment facilities, mental health facilities | CSV | 2 |
+| **CDC National Environmental Public Health Tracking** | CDC | County | Environment-health linkages: asthma, blood lead, heart disease | API | 2 |
+| **CMS Hospital Compare** | CMS | County | Hospital quality ratings, readmission rates, patient safety | CSV/API | 2 |
+| **BRFSS** — Behavioral Risk Factor Surveillance | CDC | State | Smoking, exercise, seatbelt use, preventive care (some county estimates) | CSV | 3 |
+
+**CDC Wonder Mortality:** The most powerful health dataset not yet ingested. Age-adjusted death rates by county for every ICD-10 cause of death (heart disease, cancer, diabetes, drug overdose, suicide, etc.) going back to 1999. Enables research questions like "which counties have the highest drug overdose mortality trend?" Requires API access but is free.
+
+**CMS Medicare Geographic Variation:** `https://data.cms.gov/` — spending per beneficiary by county, broken down by service type. Heavily used by health equity researchers and hospital systems. Direct CSV download available.
+
+---
+
+### Housing & Real Estate
+
+| Dataset | Agency | Level | Key Metrics | Format | Tier |
+|---|---|---|---|---|---|
+| **FHFA House Price Index** | FHFA | Metro/County | Quarterly home price index, appreciation rates, 1975–present | CSV | 1 |
+| **HUD CHAS** — Comprehensive Housing Affordability Strategy | HUD | County/Tract | Cost-burdened households, affordability gaps by income tier | CSV | 1 |
+| **HMDA** — Home Mortgage Disclosure Act | CFPB | County | Mortgage originations, denials, rates, race/income of applicants | CSV | 2 |
+| **Census Building Permits Survey** | Census | County | New residential construction permits, units authorized, value | CSV | 1 |
+| **HUD LIHTC Database** | HUD | County | Low-income housing tax credit projects, units, income targeting | CSV | 2 |
+| **HUD Picture of Subsidized Households** | HUD | County | Public housing, voucher counts, income of assisted households | CSV | 2 |
+| **Eviction Lab** (Princeton) | Princeton | County | Eviction filing rates, eviction rates, 2000–2018 | CSV | 2 |
+
+**FHFA HPI:** Quarterly house price appreciation by metro area and county. One of the most-used indicators in real estate analysis. Direct CSV at `https://www.fhfa.gov/DataTools/Downloads`. Already aligns to county FIPS.
+
+**Building Permits:** Monthly residential permit counts by county — the earliest leading indicator of housing supply and population growth. `https://www.census.gov/construction/bps/`. Small files, clean FIPS, easy ingestion.
+
+---
+
+### Education
+
+| Dataset | Agency | Level | Key Metrics | Format | Tier |
+|---|---|---|---|---|---|
+| **NCES Common Core of Data** | Dept of Education | School → County | Enrollment, demographics, free/reduced lunch, Title I status | CSV | 1 |
+| **College Scorecard** | Dept of Education | Institution → County | Completion rates, earnings after graduation, debt loads | CSV/API | 1 |
+| **IPEDS** — Integrated Postsecondary Education Data | NCES | Institution → County | Enrollment, graduation, cost, financial aid by college | CSV | 2 |
+| **Head Start Program Data** | HHS | County | Enrollment slots, grantees, funding per county | CSV | 2 |
+| **NAEP State Profiles** | NCES | State | Reading/math scores, achievement gaps, trend data | CSV | 3 |
+| **Child Care and Development Fund (CCDF)** | HHS | State/County | Childcare subsidies, licensed capacity, cost | CSV | 3 |
+
+**NCES CCD:** School-level data aggregable to county via LEAID → county FIPS crosswalk (same mechanism as our ED graduation rate ingestion). Covers all ~130k public schools. Enables questions like "what fraction of kids in this county are in Title I schools?"
+
+---
+
+### Environment & Climate
+
+| Dataset | Agency | Level | Key Metrics | Format | Tier |
+|---|---|---|---|---|---|
+| **EPA TRI** — Toxic Release Inventory | EPA | Facility → County | 800+ chemicals released, by type (air, water, land), by facility | CSV | 1 |
+| **FEMA National Risk Index** | FEMA | County | Composite natural hazard risk score: hurricane, flood, tornado, wildfire, earthquake | CSV | 1 |
+| **EPA Superfund / CERCLA Sites** | EPA | Site → County | NPL sites, cleanup status, contaminants | CSV | 2 |
+| **NOAA Climate Normals** | NOAA | Station → County | 30-year temperature and precipitation averages, extreme events | CSV | 2 |
+| **USGS Natural Hazards** | USGS | County | Earthquake risk, landslide susceptibility, subsidence | CSV | 2 |
+| **USDA NASS Cropland Data Layer** | USDA | County | Crop acreage by type, land use | CSV | 2 |
+| **CDC Environmental Health Tracking** | CDC | County | Asthma hospitalizations, blood lead levels, environmental triggers | API | 2 |
+| **EPA EnviroFacts** | EPA | Facility → County | Air permits, water permits, hazardous waste by facility | API | 3 |
+
+**EPA TRI:** `https://www.epa.gov/toxics-release-inventory-tri-program/tri-basic-data-files-calendar-years-1987-present` — annual CSV files. Facility-level releases of 800+ toxic chemicals, aggregable to county. Extremely powerful for environmental justice analysis, insurance underwriting, and real estate risk scoring.
+
+**FEMA NRI:** Pre-computed natural hazard risk scores for every US county. Combines 18 hazard types into a single composite score. Direct CSV download. Immediately useful for insurance, real estate, and ESG scoring.
+
+---
+
+### Infrastructure & Connectivity
+
+| Dataset | Agency | Level | Key Metrics | Format | Tier |
+|---|---|---|---|---|---|
+| **FCC Broadband Deployment** (Form 477) | FCC | County/ZIP | % households with broadband by speed tier, ISP count | CSV | 1 |
+| **FCC National Broadband Map** | FCC | Census Block | Coverage by technology type and speed, most current | API | 2 |
+| **USDA ReConnect Program** | USDA | County | Rural broadband grant recipients, coverage areas | CSV | 2 |
+| **DOT Highway Performance Monitoring** | DOT/FHWA | County | Lane-miles, pavement condition, bridge ratings | CSV | 2 |
+| **FAA Airport Traffic Statistics** | FAA | Airport → County | Passenger enplanements, operations, aircraft | CSV | 3 |
+| **EIA Electric Reliability** | EIA | State/Utility | Outage frequency, duration (SAIDI/SAIFI) | CSV | 3 |
+
+**FCC Broadband:** `https://www.fcc.gov/form477` — county-level broadband availability and subscription rates. Critical for economic development, healthcare (telehealth access), and education research. Direct CSV by county.
+
+---
+
+### Crime & Justice
+
+| Dataset | Agency | Level | Key Metrics | Format | Tier |
+|---|---|---|---|---|---|
+| **BJS National Prisoner Statistics** | BJS | State | Incarceration rate, prison admissions, releases | CSV | 2 |
+| **Vera Institute Incarceration Trends** | Vera (Princeton) | County | Jail and prison incarceration rates 1970–2018 | CSV | 1 |
+| **FBI NIBRS** — National Incident-Based Reporting | FBI | Agency → County | Offense, victim, offender, arrest data at incident level | CSV | 2 |
+| **OJJDP Juvenile Justice Stats** | DOJ | State/County | Juvenile arrest rates, detention, diversion by offense | CSV | 3 |
+
+**Vera Incarceration Trends:** Clean, FIPS-aligned, county-level incarceration rates going back to 1970. `https://github.com/vera-institute/incarceration-trends`. Already on GitHub as clean CSV. One of the highest-impact justice datasets.
+
+---
+
+### Agriculture & Rural
+
+| Dataset | Agency | Level | Key Metrics | Format | Tier |
+|---|---|---|---|---|---|
+| **USDA Census of Agriculture** | USDA NASS | County | Farm count, acreage, sales, operator demographics (every 5 years) | CSV | 1 |
+| **USDA NASS Crop Production** | USDA NASS | County | Acreage planted/harvested, yield, value by crop type | CSV | 2 |
+| **USDA Farm Service Agency Programs** | USDA FSA | County | Commodity support payments, crop insurance, conservation | CSV | 2 |
+| **USDA ERS Food Access Research Atlas** | USDA ERS | County | Food desert metrics (already partially ingested via Food Env Atlas) | CSV | 1 |
+
+**USDA Census of Agriculture:** County-level farm census conducted every 5 years (2017, 2022). 500+ variables: farm count, acreage, crop types, livestock, sales, operator age/race/gender, internet access, organic production. `https://www.nass.usda.gov/AgCensus/`. Enormous value for rural economic research and agricultural lending.
+
+---
+
+### Business & Entrepreneurship
+
+| Dataset | Agency | Level | Key Metrics | Format | Tier |
+|---|---|---|---|---|---|
+| **Census County Business Patterns** | Census | County | Establishments by NAICS, employment, payroll — annual 1986–present | CSV | 1 |
+| **Census Nonemployer Statistics** | Census | County | Self-employed / gig economy businesses by industry | CSV | 2 |
+| **BLS Business Employment Dynamics** | BLS | State/Metro | Establishment births, deaths, expansions, contractions | CSV | 2 |
+| **Census Annual Survey of Entrepreneurs** | Census | State | Business ownership by race, gender, veteran status | CSV | 3 |
+
+**County Business Patterns:** `https://www.census.gov/programs-surveys/cbp.html` — arguably the most fundamental business dataset. Establishment counts and employment by 6-digit NAICS industry for every county, annually since 1986. Enables questions like "how many manufacturing establishments are in this county?" and "is the service sector growing or contracting?" Clean FIPS. Annual CSV.
+
+---
+
+### Civic & Political
+
+| Dataset | Agency | Level | Key Metrics | Format | Tier |
+|---|---|---|---|---|---|
+| **MIT Election Lab** | MIT | County | Presidential, Senate, House election results 2000–2022, vote shares | CSV | 1 |
+| **FEC Campaign Finance** | FEC | County/ZIP | Individual contribution amounts, PAC spending by geography | CSV | 2 |
+| **Census Voting & Registration Supplement** | Census (CPS) | State | Voter registration rates, turnout by demographics | CSV | 3 |
+
+**MIT Election Lab:** `https://electionlab.mit.edu/data` — county-level election results for federal races going back to 2000. Clean, FIPS-aligned CSV. Enables political economy research (voting patterns vs. economic indicators), campaign targeting, and journalism.
+
+---
+
+### International Equivalents
+
+When expanding globally, these are the authoritative sources by region:
+
+| Region | Source | Entity Level | Key Datasets | Notes |
+|---|---|---|---|---|
+| **Global** | World Bank Open Data | Country | 1,600+ indicators: GDP, poverty, health, education, infrastructure | Free API, 200+ countries |
+| **Global** | IMF World Economic Outlook | Country | GDP growth, inflation, unemployment, debt | Annual/semi-annual |
+| **Global** | UN SDG Indicators | Country | 200+ Sustainable Development Goal metrics | Inconsistent coverage |
+| **Global** | WHO Global Health Observatory | Country | Mortality, disease burden, health system capacity | Free API |
+| **EU** | Eurostat NUTS2/NUTS3 | Regional (≈ county) | Demographics, employment, GDP, health, education for all 27 EU member states | Free API, consistent schema |
+| **EU** | OECD Regional Statistics | NUTS2 | GDP per capita, employment, productivity for OECD countries | Paid API or bulk download |
+| **UK** | ONS Nomis | Local Authority | Population, employment, wages, claimant count — UK equivalent of US county level | Free API |
+| **UK** | UK Data Service | Local Authority | Health, deprivation indices, housing, crime | Free with registration |
+| **Canada** | Statistics Canada | Census Division / CMA | Demographics, income, employment, housing | Free API |
+| **Australia** | ABS (Australian Bureau of Statistics) | SA2 / LGA | Census data, economic indicators, health | Free API |
+| **India** | NITI Aayog / MOSPI | District | SDG index, poverty, health, education (district = ~county equivalent) | CSV downloads |
+| **Brazil** | IBGE | Municipality | Demographics, income, health, sanitation (5,570 municipalities) | Free API |
+| **Germany** | Destatis / Regionalatlas | Kreis (county) | Demographics, employment, income — 400 counties | Free API |
+
+**The global opportunity in one sentence:** Eurostat alone covers 1,100+ NUTS3 regions across 27 EU countries with a consistent schema and free API — it's essentially one ingestion pipeline that quadruples our addressable market for every international customer.
+
+---
+
+### Dataset Priority Stack-Rank
+
+If limited to ingesting 20 datasets next, this is the order:
+
+| Priority | Dataset | Why |
+|---|---|---|
+| 1 | BEA Regional Economic Accounts | GDP per capita by county — fills the biggest gap in current profile |
+| 2 | CDC Wonder Mortality | Cause-of-death rates by county — transforms health domain depth |
+| 3 | FEMA National Risk Index | Pre-computed natural hazard risk — immediately useful for insurance vertical |
+| 4 | Census County Business Patterns | Industry employment structure — enables economic diversification analysis |
+| 5 | CMS Medicare Geographic Variation | Healthcare spending + chronic conditions — health vertical anchor |
+| 6 | FHFA House Price Index | Quarterly appreciation — real estate vertical anchor |
+| 7 | FCC Broadband Deployment | Digital access divide — broadband is the new infrastructure gap |
+| 8 | EPA TRI Toxic Release Inventory | Industrial pollution by county — environment + justice research |
+| 9 | HRSA HPSA Shortage Areas | Healthcare deserts — CHNA compliance + health vertical |
+| 10 | MIT Election Lab | County election results — civic research + political economy |
+| 11 | BLS QCEW Industry Employment | Sector-level employment — economic development vertical |
+| 12 | Census SAIPE | Annual poverty estimates — more current than ACS5 |
+| 13 | Vera Incarceration Trends | County jail/prison rates — justice research, already clean CSV |
+| 14 | Census Building Permits | Monthly construction — housing supply signal |
+| 15 | USDA Census of Agriculture | Farm census — rural economy + ag lending vertical |
+| 16 | HUD CHAS | Affordable housing need — housing vertical anchor |
+| 17 | NCES Common Core of Data | School-level → county education depth |
+| 18 | EPA Superfund Sites | Contaminated sites — environmental risk scoring |
+| 19 | World Bank Open Data | Global expansion anchor — 200 countries, 1,600 indicators |
+| 20 | Eurostat NUTS3 | EU regional data — one pipeline, 1,100 regions |
+
+---
+
 ## What To Do First (This Week)
 
 1. **Scrape the CKAN catalog.** Run a paginated fetch of all dataset metadata and store it locally. This is one Python script (~100 lines). The output is a SQLite or PostgreSQL table with 500k rows. Fast and free — and it tells us what we're actually working with before we commit to any architecture.
