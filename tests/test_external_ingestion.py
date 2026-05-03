@@ -519,68 +519,129 @@ class TestEpaAqiUpsert:
 # FBI Crime
 # ---------------------------------------------------------------------------
 
+import io
+import tempfile
+
 from ingest_fbi_crime import (
-    parse_crime_csv, upsert as crime_upsert,
+    parse_return_a_csv, upsert as crime_upsert,
 )
 
-_SAMPLE_CRIME_CSV = (
-    "State,State Code,County,County Code,Year,Population,Violent Crime,Property Crime\n"
-    "California,06,Los Angeles,037,2022,10014009,15234,89023\n"
-    "Texas,48,Harris,201,2022,4731145,23456,145678\n"
+# Kaplan Return A yearly summary format.
+# violent = murder_manslaughter + rape_total + robbery_total + assault_aggravated
+# property = burg_total + theft_total + mtr_veh_theft_total
+# LA (06037): violent=300+600+3000+11334=15234, property=20000+60000+9023=89023, pop=10014009
+# Harris (48201): violent=200+500+2000+20756=23456, property=30000+100000+15678=145678, pop=4731145
+_KAPLAN_HEADER = (
+    "year,ori,fips_state_county_code,population,"
+    "actual_murder_manslaughter,actual_rape_total,actual_robbery_total,"
+    "actual_assault_aggravated,actual_burg_total,actual_theft_total,"
+    "actual_mtr_veh_theft_total\n"
+)
+_SAMPLE_RETURN_A = (
+    _KAPLAN_HEADER
+    + "2022,CA0194200,06037,10014009,300,600,3000,11334,20000,60000,9023\n"
+    + "2022,TX0101200,48201,4731145,200,500,2000,20756,30000,100000,15678\n"
 )
 
-# Two agencies in the same county to test aggregation
-_SAMPLE_CRIME_CSV_MULTI = (
-    "State,State Code,County,County Code,Year,Population,Violent Crime,Property Crime\n"
-    "California,06,Los Angeles,037,2022,6000000,10000,60000\n"
-    "California,06,Los Angeles,037,2022,4014009,5234,29023\n"
+# Two agencies in the same county — should aggregate to one record
+# Agency 1: violent=300+500+2500+6700=10000, property=10000+40000+10000=60000, pop=6000000
+# Agency 2: violent=0+100+500+4634=5234, property=10000+20000+-1(=0)=30000... use 9023 for mvt
+# Agency 2: burg=10000, theft=9023, mvt=10000 → property=29023; pop=4014009
+# Total: violent=15234, property=89023, pop=10014009
+_SAMPLE_RETURN_A_MULTI = (
+    _KAPLAN_HEADER
+    + "2022,CA0194200,06037,6000000,300,500,2500,6700,10000,40000,10000\n"
+    + "2022,CA0194300,06037,4014009,0,100,500,4634,10000,9023,10000\n"
 )
 
 
-class TestFbiCrimeParseCsv:
+def _write_tmp_csv(content: str) -> str:
+    f = tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False, encoding="utf-8")
+    f.write(content)
+    f.flush()
+    return f.name
+
+
+class TestFbiCrimeParseReturnA:
     def test_parses_two_counties(self):
-        records = parse_crime_csv(_SAMPLE_CRIME_CSV)
+        path = _write_tmp_csv(_SAMPLE_RETURN_A)
+        records = parse_return_a_csv(path)
         assert len(records) == 2
 
-    def test_fips_constructed(self):
-        records = parse_crime_csv(_SAMPLE_CRIME_CSV)
+    def test_fips_present(self):
+        path = _write_tmp_csv(_SAMPLE_RETURN_A)
+        records = parse_return_a_csv(path)
         assert ("06037", 2022) in records
         assert ("48201", 2022) in records
 
     def test_violent_crime_count(self):
-        records = parse_crime_csv(_SAMPLE_CRIME_CSV)
+        path = _write_tmp_csv(_SAMPLE_RETURN_A)
+        records = parse_return_a_csv(path)
         assert records[("06037", 2022)]["violent_crimes"] == 15234
 
     def test_property_crime_count(self):
-        records = parse_crime_csv(_SAMPLE_CRIME_CSV)
+        path = _write_tmp_csv(_SAMPLE_RETURN_A)
+        records = parse_return_a_csv(path)
         assert records[("48201", 2022)]["property_crimes"] == 145678
 
     def test_rate_computed_per_100k(self):
-        records = parse_crime_csv(_SAMPLE_CRIME_CSV)
+        path = _write_tmp_csv(_SAMPLE_RETURN_A)
+        records = parse_return_a_csv(path)
         r = records[("06037", 2022)]
         expected = round(15234 / 10014009 * 100_000, 1)
         assert r["violent_crime_rate"] == expected
 
+    def test_population_covered(self):
+        path = _write_tmp_csv(_SAMPLE_RETURN_A)
+        records = parse_return_a_csv(path)
+        assert records[("06037", 2022)]["population_covered"] == 10014009
+
     def test_multiple_agencies_aggregated(self):
-        records = parse_crime_csv(_SAMPLE_CRIME_CSV_MULTI)
+        path = _write_tmp_csv(_SAMPLE_RETURN_A_MULTI)
+        records = parse_return_a_csv(path)
         assert len(records) == 1
         r = records[("06037", 2022)]
-        assert r["violent_crimes"] == 15234      # 10000 + 5234
-        assert r["population_covered"] == 10014009  # 6000000 + 4014009
+        assert r["violent_crimes"] == 15234
+        assert r["population_covered"] == 10014009
 
-    def test_bytes_input(self):
-        records = parse_crime_csv(_SAMPLE_CRIME_CSV.encode())
-        assert ("06037", 2022) in records
+    def test_year_filter_start(self):
+        path = _write_tmp_csv(_SAMPLE_RETURN_A)
+        records = parse_return_a_csv(path, start_year=2023)
+        assert len(records) == 0
 
-    def test_zero_population_rate_is_none(self):
-        csv = (
-            "State,State Code,County,County Code,Year,Population,Violent Crime,Property Crime\n"
-            "California,06,Tiny,999,2022,0,0,0\n"
+    def test_year_filter_end(self):
+        path = _write_tmp_csv(_SAMPLE_RETURN_A)
+        records = parse_return_a_csv(path, end_year=2021)
+        assert len(records) == 0
+
+    def test_negative_sentinel_treated_as_zero(self):
+        path = _write_tmp_csv(
+            _KAPLAN_HEADER
+            + "2022,CA0000001,06037,5000000,100,200,500,1200,-1,-1,-1\n"
         )
-        records = parse_crime_csv(csv)
+        records = parse_return_a_csv(path)
+        # -1 offense counts are missing data → treated as 0 for aggregation
+        r = records[("06037", 2022)]
+        assert r["property_crimes"] is None
+
+    def test_zero_population_rates_are_none(self):
+        path = _write_tmp_csv(
+            _KAPLAN_HEADER
+            + "2022,CA0000001,06999,0,0,0,0,0,0,0,0\n"
+        )
+        records = parse_return_a_csv(path)
         r = records[("06999", 2022)]
         assert r["violent_crime_rate"] is None
         assert r["property_crime_rate"] is None
+
+    def test_fips_zero_padded(self):
+        # FIPS stored as integer in some file versions (e.g. "6037" not "06037")
+        path = _write_tmp_csv(
+            _KAPLAN_HEADER
+            + "2022,CA0194200,6037,1000000,10,20,50,120,200,600,90\n"
+        )
+        records = parse_return_a_csv(path)
+        assert ("06037", 2022) in records
 
 
 class TestFbiCrimeUpsert:

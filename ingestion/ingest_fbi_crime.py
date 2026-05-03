@@ -1,33 +1,25 @@
 """
-Ingests FBI UCR/NIBRS crime data at county level via the FBI Crime Data Explorer API.
+Ingests FBI UCR/NIBRS crime data at county level from the Kaplan Return A dataset.
 
-The legacy flat-file URL (cde.ucr.cjis.gov/LATEST/webapp/assets/data/county_YEAR.zip)
-no longer exists.  Data is now served through the CDE API.
+Data source: Jacob Kaplan's "Offenses Known and Clearances by Arrest (Return A), 1960-2024"
+  https://www.openicpsr.org/openicpsr/project/100707/version/V22/view
+  Free openICPSR account required. Download the yearly summary CSV (not the monthly file).
 
-API key: register free at https://api.data.gov/signup/
-Set FBI_API_KEY in config/.env (or environment) before running.
-
-Approach:
-  1. Fetch all reporting agencies per state with county attribution.
-  2. Fetch state-level annual offense totals, parsed per agency.
-  3. Aggregate agency-level counts to county using the geo_entities lookup.
+Accepts .csv or .csv.gz. All years in the file are loaded unless --start/--end is given.
 
 Usage:
-  python ingest_fbi_crime.py [--start 2018] [--end 2022]
-  python ingest_fbi_crime.py --file /path/to/county_crime.csv --year 2022
+  python ingest_fbi_crime.py --file /path/to/offenses_known_yearly_1960_2024.csv
+  python ingest_fbi_crime.py --file /path/to/data.csv.gz --start 2019
 """
 
 import argparse
 import csv
-import io
+import gzip
 import logging
 import os
-import time
-import zipfile
 from collections import defaultdict
 
 import psycopg2
-import requests
 from dotenv import load_dotenv
 
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "../config/.env"))
@@ -39,146 +31,120 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-CDE_BASE = "https://api.usa.gov/crime/fbi/cde"
-RATE_LIMIT_DELAY = 0.15  # ~6-7 req/sec, well within 1000/hr default
+# Column name variants across Kaplan dataset versions
+_MURDER_COLS  = ("actual_murder_manslaughter", "actual_murder")
+_RAPE_COLS    = ("actual_rape_total", "actual_rape_legacy", "actual_rape")
+_ROBBERY_COLS = ("actual_robbery_total", "actual_robbery")
+_ASSAULT_COLS = ("actual_assault_aggravated",)
+_BURG_COLS    = ("actual_burg_total", "actual_burglary_total")
+_THEFT_COLS   = ("actual_theft_total", "actual_larceny_total")
+_MVT_COLS     = ("actual_mtr_veh_theft_total", "actual_motor_vehicle_theft_total")
+_FIPS_COLS    = ("fips_state_county_code", "county_fips", "fips")
+_POP_COLS     = ("population",)
+_YEAR_COLS    = ("year",)
 
-STATE_ABBRS = [
-    "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA",
-    "HI", "ID", "IL", "IN", "IA", "KS", "KY", "LA", "ME", "MD",
-    "MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ",
-    "NM", "NY", "NC", "ND", "OH", "OK", "OR", "PA", "RI", "SC",
-    "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY",
-    "DC",
-]
-
-
-def _get(url: str, params: dict, retries: int = 3) -> dict:
-    delay = 1.0
-    for attempt in range(1, retries + 1):
-        resp = requests.get(url, params=params, timeout=60)
-        if resp.status_code == 429:
-            wait = int(resp.headers.get("Retry-After", delay * 2))
-            log.warning("Rate limited; sleeping %ds", wait)
-            time.sleep(wait)
-            continue
-        resp.raise_for_status()
-        data = resp.json()
-        if isinstance(data, dict) and "error" in data:
-            code = data["error"].get("code", "")
-            if code == "OVER_RATE_LIMIT":
-                log.warning("Rate limit exceeded; sleeping 60s")
-                time.sleep(60)
-                continue
-            raise RuntimeError(f"CDE API error: {data['error']}")
-        return data
-    raise RuntimeError(f"Failed after {retries} attempts: {url}")
+_REQUIRED_GROUPS = ("year", "fips", "murder", "rape", "robbery", "assault", "burg", "theft", "mvt")
 
 
-def fetch_agency_county_map(state_abbr: str, api_key: str) -> dict[str, str]:
-    """Returns {agency_name: county_name} for all agencies in a state."""
-    url = f"{CDE_BASE}/agency/byStateAbbr/{state_abbr}"
-    data = _get(url, {"API_KEY": api_key})
-    # Response: {county_name: [{agency_name, ori, ...}, ...]}
-    mapping: dict[str, str] = {}
-    for county_name, agencies in data.items():
-        for agency in agencies:
-            name = agency.get("agency_name", "")
-            if name:
-                mapping[name] = county_name
-    time.sleep(RATE_LIMIT_DELAY)
-    return mapping
+def _first_col(header: list[str], candidates: tuple[str, ...]) -> str | None:
+    lower = [c.lower() for c in header]
+    for c in candidates:
+        if c.lower() in lower:
+            return header[lower.index(c.lower())]
+    return None
 
 
-def fetch_state_offense_totals(
-    state_abbr: str, offense_type: str, year: int, api_key: str
-) -> dict[str, int]:
-    """Returns {agency_name: annual_count} from the state summarized endpoint."""
-    url = f"{CDE_BASE}/summarized/state/{state_abbr}/{offense_type}"
-    data = _get(url, {
-        "from": f"01-{year}",
-        "to": f"12-{year}",
-        "API_KEY": api_key,
-    })
-    actuals = data.get("offenses", {}).get("actuals", {})
-    result: dict[str, int] = {}
-    for key, monthly in actuals.items():
-        if not key.endswith(" Offenses"):
-            continue
-        agency_name = key[: -len(" Offenses")]
-        total = sum(v for v in monthly.values() if isinstance(v, (int, float)))
-        result[agency_name] = int(total)
-    time.sleep(RATE_LIMIT_DELAY)
-    return result
-
-
-def build_county_totals(
-    agency_county_map: dict[str, str],
-    violent_by_agency: dict[str, int],
-    property_by_agency: dict[str, int],
-    state_abbr: str,
-) -> dict[tuple[str, str], dict]:
-    """Returns {(state_abbr, county_name): {violent, property}}."""
-    totals: dict[tuple[str, str], dict] = defaultdict(
-        lambda: {"violent": 0, "property": 0}
-    )
-    for agency_name, count in violent_by_agency.items():
-        county = agency_county_map.get(agency_name)
-        if county:
-            totals[(state_abbr, county)]["violent"] += count
-    for agency_name, count in property_by_agency.items():
-        county = agency_county_map.get(agency_name)
-        if county:
-            totals[(state_abbr, county)]["property"] += count
-    return dict(totals)
-
-
-def _int_or_none(value: str) -> int | None:
-    v = value.strip().replace(",", "")
+def _int_val(val: str) -> int | None:
+    """Parse int; treat empty or negative sentinel (-1) as None."""
+    v = val.strip().replace(",", "")
     if not v:
         return None
     try:
-        return int(float(v))
+        n = int(float(v))
+        return None if n < 0 else n
     except (ValueError, TypeError):
         return None
 
 
-def parse_crime_csv(content: bytes | str) -> dict[tuple[str, int], dict]:
-    """Parse legacy FBI county crime CSV (used with --file option)."""
-    if isinstance(content, bytes):
-        text = content.decode("utf-8", errors="replace")
-    else:
-        text = content
+def parse_return_a_csv(
+    path: str,
+    start_year: int | None = None,
+    end_year: int | None = None,
+) -> dict[tuple[str, int], dict]:
+    """
+    Parse Kaplan Return A yearly summary CSV.
+    Returns {(fips5, year): {population_covered, violent_crimes, violent_crime_rate,
+                              property_crimes, property_crime_rate}}.
+    """
+    opener = gzip.open if path.endswith(".gz") else open
 
     accum: dict[tuple[str, int], dict] = defaultdict(
         lambda: {"population": 0, "violent": 0, "property": 0}
     )
-    reader = csv.DictReader(io.StringIO(text))
-    for row in reader:
-        state_code = row.get("State Code", "").strip().zfill(2)
-        county_code = row.get("County Code", "").strip().zfill(3)
-        if not state_code.isdigit() or not county_code.isdigit():
-            continue
-        fips = state_code + county_code
-        try:
-            year = int(row.get("Year", "").strip())
-        except (ValueError, TypeError):
-            continue
-        pop  = _int_or_none(row.get("Population", "")) or 0
-        viol = _int_or_none(row.get("Violent Crime", "")) or 0
-        prop = _int_or_none(row.get("Property Crime", "")) or 0
-        key = (fips, year)
-        accum[key]["population"] += pop
-        accum[key]["violent"]    += viol
-        accum[key]["property"]   += prop
+
+    with opener(path, "rt", encoding="utf-8", errors="replace") as fh:
+        reader = csv.DictReader(fh)
+        header = list(reader.fieldnames or [])
+
+        col = {
+            "year":    _first_col(header, _YEAR_COLS),
+            "fips":    _first_col(header, _FIPS_COLS),
+            "pop":     _first_col(header, _POP_COLS),
+            "murder":  _first_col(header, _MURDER_COLS),
+            "rape":    _first_col(header, _RAPE_COLS),
+            "robbery": _first_col(header, _ROBBERY_COLS),
+            "assault": _first_col(header, _ASSAULT_COLS),
+            "burg":    _first_col(header, _BURG_COLS),
+            "theft":   _first_col(header, _THEFT_COLS),
+            "mvt":     _first_col(header, _MVT_COLS),
+        }
+
+        missing = [k for k in _REQUIRED_GROUPS if col[k] is None]
+        if missing:
+            raise ValueError(
+                f"Required columns not found in CSV: {missing}. "
+                f"First 20 headers: {header[:20]}"
+            )
+
+        for row in reader:
+            try:
+                year = int(row[col["year"]])
+            except (ValueError, TypeError):
+                continue
+            if start_year and year < start_year:
+                continue
+            if end_year and year > end_year:
+                continue
+
+            raw_fips = row.get(col["fips"], "").strip()
+            if not raw_fips:
+                continue
+            fips = raw_fips.zfill(5)
+            if not fips.isdigit() or len(fips) != 5:
+                continue
+
+            murder  = _int_val(row.get(col["murder"],  "")) or 0
+            rape    = _int_val(row.get(col["rape"],    "")) or 0
+            robbery = _int_val(row.get(col["robbery"], "")) or 0
+            assault = _int_val(row.get(col["assault"], "")) or 0
+            burg    = _int_val(row.get(col["burg"],    "")) or 0
+            theft   = _int_val(row.get(col["theft"],   "")) or 0
+            mvt     = _int_val(row.get(col["mvt"],     "")) or 0
+            pop     = _int_val(row.get(col["pop"] or "", "")) or 0
+
+            key = (fips, year)
+            accum[key]["violent"]  += murder + rape + robbery + assault
+            accum[key]["property"] += burg + theft + mvt
+            accum[key]["population"] += pop
 
     records: dict[tuple[str, int], dict] = {}
     for (fips, year), t in accum.items():
         pop, viol, prop = t["population"], t["violent"], t["property"]
         records[(fips, year)] = {
-            "population_covered":  pop if pop else None,
-            "violent_crimes":      viol if pop else None,
+            "population_covered":  pop or None,
+            "violent_crimes":      viol or None,
             "violent_crime_rate":  round(viol / pop * 100_000, 1) if pop else None,
-            "property_crimes":     prop if pop else None,
+            "property_crimes":     prop or None,
             "property_crime_rate": round(prop / pop * 100_000, 1) if pop else None,
         }
     return records
@@ -207,149 +173,22 @@ def upsert(conn, records: dict[tuple[str, int], dict], known_fips: set[str]) -> 
         for (fips, year), data in records.items():
             if fips not in known_fips:
                 continue
-            row = {"fips": fips, "year": year, **data}
-            cur.execute(sql, row)
+            cur.execute(sql, {"fips": fips, "year": year, **data})
             count += cur.rowcount
     conn.commit()
     return count
 
 
-def _build_county_fips_map(conn) -> tuple[set[str], dict[tuple[str, str], str]]:
-    """
-    Returns:
-      known_fips: all county FIPS codes
-      lookup: {(state_abbr_upper, county_name_upper): fips}
-    """
-    with conn.cursor() as cur:
-        cur.execute(
-            "SELECT g.fips, g.name, s.name AS state_name "
-            "FROM geo_entities g "
-            "JOIN geo_entities s ON s.fips = g.state_fips AND s.geo_type = 'state' "
-            "WHERE g.geo_type = 'county'"
-        )
-        rows = cur.fetchall()
-
-    known_fips: set[str] = set()
-    lookup: dict[tuple[str, str], str] = {}
-    for fips, county_name, state_name in rows:
-        known_fips.add(fips)
-        state_abbr = _state_name_to_abbr(state_name)
-        # county_name in geo_entities is e.g. "Los Angeles County, California"
-        base = county_name.split(",")[0].strip().upper()
-        lookup[(state_abbr, base)] = fips
-        # Also store without "County"/"Parish"/etc. suffix for looser matching
-        stripped = base.replace(" COUNTY", "").replace(" PARISH", "").replace(" BOROUGH", "").strip()
-        lookup.setdefault((state_abbr, stripped), fips)
-    return known_fips, lookup
-
-
-def ingest_api(conn, start: int, end: int, api_key: str) -> int:
-    """Ingest FBI crime data via the CDE API for all counties."""
-    known_fips, county_fips_map = _build_county_fips_map(conn)
-
-    total = 0
-    for state_abbr in STATE_ABBRS:
-        log.info("Fetching agencies for %s", state_abbr)
-        try:
-            agency_county_map = fetch_agency_county_map(state_abbr, api_key)
-        except Exception as exc:
-            log.warning("Skipping %s agency fetch: %s", state_abbr, exc)
-            continue
-
-        for year in range(start, end + 1):
-            log.info("Fetching %s crime data for %d", state_abbr, year)
-            try:
-                violent = fetch_state_offense_totals(state_abbr, "violent-crime", year, api_key)
-                property_c = fetch_state_offense_totals(state_abbr, "property-crime", year, api_key)
-            except Exception as exc:
-                log.warning("Skipping %s/%d: %s", state_abbr, year, exc)
-                continue
-
-            if not violent and not property_c:
-                log.info("  No per-agency data for %s/%d (state aggregate only)", state_abbr, year)
-                continue
-
-            # Aggregate agency-level counts to county
-            county_totals: dict[str, dict] = defaultdict(lambda: {"violent": 0, "property": 0})
-            for agency_name, count in violent.items():
-                county = agency_county_map.get(agency_name, "")
-                fips = _resolve_county_fips(state_abbr, county, county_fips_map)
-                if fips:
-                    county_totals[fips]["violent"] += count
-            for agency_name, count in property_c.items():
-                county = agency_county_map.get(agency_name, "")
-                fips = _resolve_county_fips(state_abbr, county, county_fips_map)
-                if fips:
-                    county_totals[fips]["property"] += count
-
-            records: dict[tuple[str, int], dict] = {}
-            for fips, t in county_totals.items():
-                records[(fips, year)] = {
-                    "population_covered": None,
-                    "violent_crimes":     t["violent"] or None,
-                    "violent_crime_rate": None,
-                    "property_crimes":    t["property"] or None,
-                    "property_crime_rate": None,
-                }
-
-            count = upsert(conn, records, known_fips)
-            log.info("  Upserted %d rows for %s/%d", count, state_abbr, year)
-            total += count
-
-    return total
-
-
-def _resolve_county_fips(state_abbr: str, county_name: str, lookup: dict) -> str | None:
-    key = (state_abbr, county_name.upper())
-    fips = lookup.get(key)
-    if fips:
-        return fips
-    stripped = county_name.upper().replace(" COUNTY", "").replace(" PARISH", "").replace(" BOROUGH", "").strip()
-    return lookup.get((state_abbr, stripped))
-
-
-_STATE_ABBR_TO_NAME = {
-    "AL": "Alabama", "AK": "Alaska", "AZ": "Arizona", "AR": "Arkansas",
-    "CA": "California", "CO": "Colorado", "CT": "Connecticut", "DE": "Delaware",
-    "FL": "Florida", "GA": "Georgia", "HI": "Hawaii", "ID": "Idaho",
-    "IL": "Illinois", "IN": "Indiana", "IA": "Iowa", "KS": "Kansas",
-    "KY": "Kentucky", "LA": "Louisiana", "ME": "Maine", "MD": "Maryland",
-    "MA": "Massachusetts", "MI": "Michigan", "MN": "Minnesota", "MS": "Mississippi",
-    "MO": "Missouri", "MT": "Montana", "NE": "Nebraska", "NV": "Nevada",
-    "NH": "New Hampshire", "NJ": "New Jersey", "NM": "New Mexico", "NY": "New York",
-    "NC": "North Carolina", "ND": "North Dakota", "OH": "Ohio", "OK": "Oklahoma",
-    "OR": "Oregon", "PA": "Pennsylvania", "RI": "Rhode Island", "SC": "South Carolina",
-    "SD": "South Dakota", "TN": "Tennessee", "TX": "Texas", "UT": "Utah",
-    "VT": "Vermont", "VA": "Virginia", "WA": "Washington", "WV": "West Virginia",
-    "WI": "Wisconsin", "WY": "Wyoming", "DC": "District of Columbia",
-}
-
-
-_STATE_NAME_TO_ABBR = {v.upper(): k for k, v in _STATE_ABBR_TO_NAME.items()}
-
-
-def _state_name_to_abbr(name: str) -> str:
-    return _STATE_NAME_TO_ABBR.get(name.upper(), name[:2].upper())
-
-
-def ingest(conn, start: int, end: int, api_key: str | None = None) -> int:
-    if api_key:
-        return ingest_api(conn, start, end, api_key)
-    raise RuntimeError(
-        "FBI_API_KEY not set. Register free at https://api.data.gov/signup/ "
-        "and add FBI_API_KEY to config/.env"
-    )
-
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--start", type=int, default=2018)
-    parser.add_argument("--end",   type=int, default=2022)
-    parser.add_argument("--file",  help="Path to a local county crime CSV (legacy format)")
-    parser.add_argument("--year",  type=int, help="Year for --file mode (required with --file)")
+    parser.add_argument(
+        "--file", required=True,
+        help="Path to Kaplan Return A yearly CSV (.csv or .csv.gz). "
+             "Download from: https://www.openicpsr.org/openicpsr/project/100707/version/V22/view",
+    )
+    parser.add_argument("--start", type=int, help="First year to ingest (default: all years in file)")
+    parser.add_argument("--end",   type=int, help="Last year to ingest (default: all years in file)")
     args = parser.parse_args()
-
-    api_key = os.environ.get("FBI_API_KEY")
 
     conn = psycopg2.connect(
         host=os.environ["DB_HOST"],
@@ -359,24 +198,19 @@ if __name__ == "__main__":
         password=os.environ.get("DB_PASSWORD", ""),
     )
     try:
-        if args.file:
-            if not args.year:
-                parser.error("--year is required with --file")
-            with conn.cursor() as cur:
-                cur.execute("SELECT fips FROM geo_entities WHERE geo_type = 'county'")
-                known_fips = {r[0] for r in cur.fetchall()}
-            with open(args.file, "rb") as fh:
-                records = parse_crime_csv(fh.read())
-            count = upsert(conn, records, known_fips)
-            log.info("Upserted %d rows. Done.", count)
-        else:
-            if not api_key:
-                raise SystemExit(
-                    "ERROR: FBI_API_KEY not set.\n"
-                    "Register free at https://api.data.gov/signup/ "
-                    "and add FBI_API_KEY=your_key to config/.env"
-                )
-            ingest(conn, args.start, args.end, api_key)
-            log.info("Done.")
+        with conn.cursor() as cur:
+            cur.execute("SELECT fips FROM geo_entities WHERE geo_type = 'county'")
+            known_fips = {r[0] for r in cur.fetchall()}
+
+        log.info("Parsing %s ...", args.file)
+        records = parse_return_a_csv(args.file, args.start, args.end)
+        years = sorted({y for _, y in records})
+        log.info(
+            "Parsed %d county-year records spanning %d–%d",
+            len(records), min(years), max(years),
+        )
+
+        count = upsert(conn, records, known_fips)
+        log.info("Upserted %d rows. Done.", count)
     finally:
         conn.close()
