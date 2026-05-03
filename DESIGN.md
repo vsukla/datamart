@@ -40,6 +40,11 @@ flowchart LR
         I11[ingest_eia_energy.py]
         I12[ingest_nhtsa_traffic.py]
         I13[ingest_ed_graduation.py]
+        I14[scrape_data_gov.py\ndata.gov CKAN]
+    end
+
+    subgraph mcp ["MCP Server"]
+        MCP[datamart-mcp/server.py\n5 tools]
     end
 
     subgraph store ["PostgreSQL — datamart"]
@@ -56,6 +61,9 @@ flowchart LR
         T[(nhtsa_traffic)]
         ED[(ed_graduation)]
         DS[(datasets)]
+        IR[(ingestion_runs)]
+        SS[(schema_snapshots)]
+        DG[(data_gov_catalog)]
         CV[(county_profile VIEW)]
     end
 
@@ -70,12 +78,16 @@ flowchart LR
         V8["GET /api/aqi/"]
         V9["GET /api/crime/"]
         V10["GET /api/profile/"]
+        V10b["GET /api/profile/:fips/"]
+        V10c["GET /api/compare/"]
+        V10d["GET /api/rankings/:fips/"]
         V11["GET /api/datasets/"]
         V12["GET /api/housing/"]
         V13["GET /api/energy/"]
         V14["GET /api/traffic/"]
         V15["GET /api/education/"]
         V16["GET /dashboard/"]
+        V17["GET /profile/:fips/"]
     end
 
     C([API Consumers])
@@ -150,7 +162,11 @@ datamart/
 │   ├── ingest_hud_fmr.py             # HUD Fair Market Rents (annual Excel per county)
 │   ├── ingest_eia_energy.py          # EIA energy consumption (state-level, BBTU)
 │   ├── ingest_nhtsa_traffic.py       # NHTSA FARS traffic fatalities (county-level)
-│   └── ingest_ed_graduation.py       # EDFacts graduation rates (LEAID→county crosswalk)
+│   ├── ingest_ed_graduation.py       # EDFacts graduation rates (LEAID→county crosswalk)
+│   ├── scrape_data_gov.py            # data.gov CKAN catalog scraper (scored 0–100; requires DATA_GOV_API_KEY)
+│   └── compute_data_quality.py       # null-rate + row-count refresh for all sources
+├── datamart-mcp/
+│   └── server.py                     # MCP server — 5 tools exposing the API to AI assistants
 ├── schema/
 │   └── schema.sql                    # Canonical DDL — all tables + county_profile view
 ├── migrations/
@@ -169,6 +185,12 @@ datamart/
 │   ├── 012_eia_energy.sql
 │   ├── 013_nhtsa_traffic.sql
 │   ├── 014_ed_graduation.sql
+│   ├── 015_governance_ingestion_runs.sql  # ingestion_runs audit log + ingestion_run_id FKs on all 10 source tables
+│   ├── 016_schema_snapshots.sql           # schema_snapshots column-level drift detection
+│   ├── 017_datasets_governance.sql        # 6 governance columns on datasets (license, sensitivity, etc.)
+│   ├── 018_governance_seeds.sql           # CC0-1.0 seeds for all 10 sources
+│   ├── 019_data_gov_catalog.sql           # data_gov_catalog table (402k data.gov datasets, scored 0–100)
+│   ├── 020_data_gov_indexes.sql           # indexes on data_gov_catalog
 │   └── migrate.sh
 ├── requirements.txt
 ├── server/
@@ -176,14 +198,19 @@ datamart/
 │   ├── datamart_api/                 # Django project settings, urls, wsgi
 │   ├── census/                       # Django app: REST API (models, serializers, views, urls)
 │   └── dashboard/                    # Django app: web dashboard
-│       └── templates/dashboard/index.html
+│       └── templates/dashboard/
+│           ├── index.html            # main dashboard
+│           ├── profile.html          # county profile page
+│           └── _metric.html          # metric row partial
 ├── tests/
 │   ├── test_ingestion.py             # Unit tests for Census ACS5 ingestion helpers
 │   ├── test_api.py                   # Django integration tests for all API endpoints + dashboard
 │   ├── test_aggregates.py            # Unit tests for compute_aggregates SQL builders
 │   ├── test_external_ingestion.py    # Unit tests for CDC, BLS, USDA, EPA, FBI ingestion
 │   ├── test_data_quality.py          # Unit tests for compute_data_quality
-│   └── test_base_ingestion.py        # Unit tests for BaseIngestion
+│   ├── test_base_ingestion.py        # Unit tests for BaseIngestion
+│   ├── test_mcp_server.py            # Unit tests for MCP server tools
+│   └── test_scrape_data_gov.py       # Unit tests for data.gov CKAN scraper
 ├── conftest.py
 └── pytest.ini
 ```
@@ -192,7 +219,7 @@ datamart/
 
 ## Data Model
 
-The canonical DDL is in [`schema/schema.sql`](schema/schema.sql) (currently at migration 010). All tables are created there; the `county_profile` view is rebuilt by each migration that adds a new source.
+The canonical DDL is in [`schema/schema.sql`](schema/schema.sql) (currently at migration 020). All tables are created there; the `county_profile` view is rebuilt by each migration that adds a new source.
 
 ### `geo_entities`
 
@@ -410,24 +437,75 @@ Annual traffic fatality counts from NHTSA FARS. One row per county × year. Uniq
 
 Source catalog — one row per ingested data source. Updated by ingestion scripts (`mark_ingested`) and `compute_data_quality.py`.
 
-| Column               | Type         | Notes                                    |
-|----------------------|--------------|------------------------------------------|
-| `source_key`         | VARCHAR(30)  | Unique key matching ingestion scripts    |
-| `name`               | VARCHAR(100) | Human-readable name                      |
-| `description`        | TEXT         |                                          |
-| `source_url`         | TEXT         | Canonical data source URL                |
-| `entity_type`        | VARCHAR(20)  | `'county'`, `'state'`, etc.              |
-| `update_cadence`     | VARCHAR(20)  | `'annual'`, `'monthly'`, etc.            |
-| `row_count`          | INTEGER      | Populated by `compute_data_quality.py`   |
-| `null_rates`         | JSONB        | `{column: null_rate}` per metric column  |
-| `last_ingested_at`   | TIMESTAMPTZ  | Set by `mark_ingested()` after each run  |
-| `quality_computed_at`| TIMESTAMPTZ  | Set by `compute_data_quality.py`         |
+| Column                    | Type         | Notes                                         |
+|---------------------------|--------------|-----------------------------------------------|
+| `source_key`              | VARCHAR(30)  | Unique key matching ingestion scripts         |
+| `name`                    | VARCHAR(100) | Human-readable name                           |
+| `description`             | TEXT         |                                               |
+| `source_url`              | TEXT         | Canonical data source URL                     |
+| `entity_type`             | VARCHAR(20)  | `'county'`, `'state'`, etc.                   |
+| `update_cadence`          | VARCHAR(20)  | `'annual'`, `'monthly'`, etc.                 |
+| `row_count`               | INTEGER      | Populated by `compute_data_quality.py`        |
+| `null_rates`              | JSONB        | `{column: null_rate}` per metric column       |
+| `last_ingested_at`        | TIMESTAMPTZ  | Set by `mark_ingested()` after each run       |
+| `quality_computed_at`     | TIMESTAMPTZ  | Set by `compute_data_quality.py`              |
+| `license_spdx`            | VARCHAR(50)  | SPDX license ID (e.g. `CC0-1.0`)             |
+| `commercial_ok`           | BOOLEAN      | Whether commercial use is permitted           |
+| `attribution_required`    | BOOLEAN      | Whether attribution is required               |
+| `attribution_text`        | TEXT         | Attribution string if required                |
+| `sensitivity_tier`        | SMALLINT     | 1 = public, 2 = restricted, 3 = private       |
+| `min_population_suppress` | INTEGER      | Suppress rows below this population threshold |
+
+All 10 active sources are seeded with `CC0-1.0`, `commercial_ok=true`, `sensitivity_tier=1`.
+
+#### `ingestion_runs`
+
+Immutable audit log of every ingestion attempt. Each source table has a nullable `ingestion_run_id` FK pointing here.
+
+| Column         | Type         | Notes                                          |
+|----------------|--------------|------------------------------------------------|
+| `id`           | SERIAL PK    |                                                |
+| `source_key`   | VARCHAR(30)  |                                                |
+| `started_at`   | TIMESTAMPTZ  |                                                |
+| `completed_at` | TIMESTAMPTZ  | NULL while in progress                         |
+| `status`       | VARCHAR(20)  | `'running'`, `'success'`, `'error'`            |
+| `rows_loaded`  | INTEGER      |                                                |
+| `file_hash`    | VARCHAR(64)  | SHA-256 of source file for dedup               |
+| `error_message`| TEXT         | NULL on success                                |
+
+#### `schema_snapshots`
+
+Column-level schema drift detection. One row per source × column × snapshot time.
+
+| Column        | Type        | Notes                               |
+|---------------|-------------|-------------------------------------|
+| `source_key`  | VARCHAR(30) |                                     |
+| `column_name` | VARCHAR(60) |                                     |
+| `data_type`   | VARCHAR(30) |                                     |
+| `is_nullable` | BOOLEAN     |                                     |
+| `snapped_at`  | TIMESTAMPTZ |                                     |
+
+#### `data_gov_catalog`
+
+Scored metadata catalog from data.gov CKAN. Populated by `scrape_data_gov.py`. Currently ~5k rows scraped (402k total available).
+
+| Column          | Type         | Notes                                            |
+|-----------------|--------------|--------------------------------------------------|
+| `package_id`    | UUID PK      | data.gov CKAN package identifier                 |
+| `title`         | TEXT         |                                                  |
+| `organization`  | VARCHAR(200) | Publishing agency                                |
+| `tags`          | TEXT[]       |                                                  |
+| `formats`       | TEXT[]       | Available download formats                       |
+| `license_id`    | VARCHAR(100) |                                                  |
+| `score`         | SMALLINT     | Relevance score 0–100 (county + open + recent)   |
+| `metadata_modified` | DATE    |                                                  |
+| `scraped_at`    | TIMESTAMPTZ  |                                                  |
 
 ### `county_profile` View
 
-A cross-source read-only view joining all six data sources at county level. Each row is one county with the most recent available data from each source (via `LATERAL` subqueries ordered by year DESC). Exposed at `/api/profile/`.
+A cross-source read-only view joining all 10 data sources at county level. Each row is one county with the most recent available data from each source (via `LATERAL` subqueries ordered by year DESC). Exposed at `/api/profile/` and `/api/profile/<fips>/`.
 
-Includes all columns from `census_acs5` (including the new health/commute/race columns), `cdc_places`, `bls_laus`, `usda_food_env`, `epa_aqi`, and `fbi_crime`.
+Includes columns from `census_acs5`, `cdc_places`, `bls_laus`, `usda_food_env`, `epa_aqi`, `fbi_crime`, `nhtsa_traffic`, `hud_fmr`, and `ed_graduation`.
 
 ---
 
@@ -624,6 +702,15 @@ FBI violent and property crime rates. Params: `fips`, `state_fips`, `year`.
 #### `GET /api/profile/`
 Unified county profile joining all sources (most recent year per source). Params: `fips`, `state_fips`. Backed by the `county_profile` view.
 
+#### `GET /api/profile/<fips>/`
+Single-county profile detail. Returns one object (not paginated). 404 if the FIPS is not found.
+
+#### `GET /api/compare/`
+Side-by-side profiles for up to 6 counties. Param: `fips` (comma-separated, e.g. `?fips=06037,48201`). Returns a paginated list of `county_profile` rows.
+
+#### `GET /api/rankings/<fips>/`
+All ranking metrics for one county from `agg_rankings`. Param: `year` (optional, filters to a single vintage). Returns `metric`, `year`, `value`, `rank`, `percentile`, `peer_count`.
+
 #### `GET /api/housing/`
 HUD Fair Market Rents by bedroom count per county. Params: `fips`, `state_fips`, `year`.
 
@@ -714,6 +801,62 @@ Sortable by any column. Shows 11 columns from all four sources per county: Count
 
 ---
 
+## County Profile Page
+
+Source: [`server/dashboard/templates/dashboard/profile.html`](server/dashboard/templates/dashboard/profile.html)
+
+Served at `/profile/<fips>/`. A full single-county view with all 10 data sources organized in cards, a national rankings table, and a compare widget.
+
+### Data loading
+
+`ProfileView` (Django `TemplateView`) loads two queries at render time:
+
+- `CountyProfile.objects.get(fips=fips)` — all cross-source fields via the `county_profile` view; raises 404 if not found
+- `AggRanking.objects.filter(fips=fips).order_by("metric", "-year")` — deduped to the most recent year per metric and passed as `rankings_json`
+
+### Rankings table
+
+Renders one row per metric showing `value`, national `rank`, `percentile` (with a colored progress bar), and `peer_count`. Color coding: ≥75th percentile green, ≥50th yellow, <50th red.
+
+### Compare widget
+
+Enter up to 5 additional FIPS codes. Builds a link to `/api/compare/?fips=<current>,<added...>` once at least one county is added.
+
+---
+
+## MCP Server
+
+Source: [`datamart-mcp/server.py`](datamart-mcp/server.py)
+
+An MCP (Model Context Protocol) server exposing the Datamart API to AI assistants (Claude Desktop, Claude Code, etc.).
+
+### Tools
+
+| Tool | Description |
+|---|---|
+| `get_county_profile` | Full profile for one county by FIPS — calls `/api/profile/<fips>/` |
+| `search_counties` | Search by name and/or state — calls `/api/geo/` |
+| `get_state_summary` | Census aggregates for a state — calls `/api/aggregates/state-summary/` |
+| `compare_counties` | Side-by-side profiles for up to 6 FIPS codes — calls `/api/compare/` |
+| `list_datasets` | Source catalog with quality stats — calls `/api/datasets/` |
+
+### Configuration
+
+```json
+{
+  "mcpServers": {
+    "datamart": {
+      "command": "python",
+      "args": ["/path/to/datamart-mcp/server.py"]
+    }
+  }
+}
+```
+
+Set `DATAMART_API_URL` env var if the API is not on `http://localhost:8000/api` (default).
+
+---
+
 ## Automation
 
 Source: [`.github/workflows/`](.github/workflows/)
@@ -737,13 +880,13 @@ Run with:
 python -m pytest tests/ -v
 ```
 
-**365 tests total.**
+**407 tests total.**
 
 ### test_ingestion.py — 47 unit tests
 
 Pure Python, no database. Covers Census ACS5 ingestion helpers: `_int()`, `_pct()`, `_mean_commute()`, `normalize_state()` (including all new health/commute/race fields), `normalize_county()`, `_fetch()` (mocked HTTP), and `load()` (mocked psycopg2).
 
-### test_api.py — 148 Django integration tests
+### test_api.py — 160 Django integration tests
 
 Uses Django's `TestCase` with a real PostgreSQL test database. All `managed = False` tables are created via `connection.schema_editor()`. Test classes:
 
@@ -751,7 +894,8 @@ Uses Django's `TestCase` with a real PostgreSQL test database. All `managed = Fa
 - **`AggregateAPITest`** — all four aggregate endpoints, filter params, validation
 - **`DashboardTest`** — 200 response, embedded JSON, chart canvas IDs, health/food metric labels, catalog panel JSON and HTML presence
 - **`ExternalSourceAPITest`** — `/api/health/`, `/api/labor/`, `/api/food/`: all filter params and field presence
-- **`CountyProfileAPITest`** — `/api/profile/`: all six source fields present (including EPA AQI and FBI crime), filter params, pagination
+- **`CountyProfileAPITest`** — `/api/profile/` (list + filters), `/api/profile/<fips>/` (detail, 404), `/api/compare/` (multi-county, cap, empty); all 10 source fields
+- **`CountyRankingsAPITest`** — `/api/rankings/<fips>/`: all metrics for a county, `?year` filter, empty on unknown FIPS, field presence
 - **`EpaAqiAPITest`** — `/api/aqi/`: filter params, all 11 AQI metric fields
 - **`FbiCrimeAPITest`** — `/api/crime/`: filter params, all crime rate fields
 - **`HudFmrAPITest`** — `/api/housing/`: filter params, all bedroom-count FMR fields
@@ -787,6 +931,14 @@ Pure Python. Covers `compute_quality()` (row count, null rates dict, empty table
 
 Pure Python. Covers `BaseIngestion`: `fetch()` (HTTP, zip extraction, year substitution, HTTP error), `mark_ingested()` (SQL, source_key, commit), `run()` (year iteration, total count, mark_ingested called once, records passed to upsert), `build_parser()` (defaults, overrides), abstract method enforcement.
 
+### test_mcp_server.py — 17 unit tests
+
+Pure Python, mocked HTTP. Covers all 5 MCP tools: `get_county_profile`, `search_counties`, `get_state_summary`, `compare_counties`, `list_datasets`. Validates request construction, response parsing, and error handling.
+
+### test_scrape_data_gov.py — 13 unit tests
+
+Pure Python, mocked HTTP. Covers `scrape_data_gov.py`: pagination, scoring (county + open license + recent vintage), `--start-offset` resume, upsert logic, CSV/MD export.
+
 ---
 
 ## Configuration
@@ -805,6 +957,7 @@ DJANGO_DEBUG=true
 DJANGO_ALLOWED_HOSTS=localhost,127.0.0.1
 # Optional
 CDC_APP_TOKEN=...          # Socrata app token (increases rate limits)
+DATA_GOV_API_KEY=...       # api.data.gov key; DEMO_KEY works but caps at 5k/day
 ```
 
 ---
@@ -819,7 +972,7 @@ Use `schema/schema.sql` to set up a brand-new database in one shot:
 psql "$DB_URL" -f schema/schema.sql
 ```
 
-This creates all tables and the `county_profile` view, and pre-populates `schema_migrations` so the migration runner knows they've been applied (currently through migration 014).
+This creates all tables and the `county_profile` view, and pre-populates `schema_migrations` so the migration runner knows they've been applied (currently through migration 020).
 
 ### Incremental migrations
 
@@ -840,9 +993,15 @@ migrations/
   010_census_additional_vars.sql # census_acs5 health/commute/race columns + updated view
   011_hud_fmr.sql                # hud_fmr table + updated county_profile view
   012_eia_energy.sql             # eia_energy table (state-level)
-  013_nhtsa_traffic.sql          # nhtsa_traffic table + updated county_profile view
-  014_ed_graduation.sql          # ed_graduation table + updated county_profile view
-  migrate.sh                     # runner: applies pending migrations in order
+  013_nhtsa_traffic.sql              # nhtsa_traffic table + updated county_profile view
+  014_ed_graduation.sql              # ed_graduation table + updated county_profile view
+  015_governance_ingestion_runs.sql  # ingestion_runs table + ingestion_run_id FKs on all 10 source tables
+  016_schema_snapshots.sql           # schema_snapshots table
+  017_datasets_governance.sql        # 6 governance columns on datasets
+  018_governance_seeds.sql           # CC0-1.0 seeds for all 10 sources
+  019_data_gov_catalog.sql           # data_gov_catalog table
+  020_data_gov_indexes.sql           # indexes on data_gov_catalog
+  migrate.sh                         # runner: applies pending migrations in order
 ```
 
 ```bash

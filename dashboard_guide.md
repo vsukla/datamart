@@ -2,7 +2,7 @@
 
 **URL:** `http://localhost:8001/dashboard/`
 
-The dashboard lets you explore U.S. county-level data across four federal sources — Census ACS5, CDC PLACES, BLS LAUS, and USDA Food Environment Atlas — without writing any queries. You can compare states, drill into counties, and view cross-source correlations in charts and a sortable table.
+The dashboard lets you explore U.S. county-level data across ten federal sources — Census ACS5, CDC PLACES, BLS LAUS, USDA Food Environment Atlas, EPA AQI, FBI Crime, HUD Fair Market Rents, EIA Energy, NHTSA Traffic, and DoEd Graduation Rates — without writing any queries. You can compare states, drill into counties, view cross-source correlations, and navigate to full county profile pages.
 
 ---
 
@@ -89,6 +89,35 @@ A full cross-source table with one row per county. Columns:
 
 ---
 
+## County Profile Page
+
+Each county has a dedicated profile page at `/profile/<fips>/` (e.g. `/profile/06037/` for Los Angeles County). The page shows all ten data source sections in cards, a national rankings table, and a compare widget.
+
+### Data sections
+
+| Section | Source |
+|---|---|
+| Census ACS5 | Income, home value, poverty, education, insurance, commute, race |
+| Health — CDC PLACES | Obesity, diabetes, smoking, hypertension, depression, physical activity, mental health |
+| Labor — BLS LAUS | Labor force, employed, unemployed, unemployment rate |
+| Food — USDA | Low food access, grocery density, fast food, SNAP, farmers markets |
+| Air Quality — EPA AQI | Median/max AQI, good/moderate/unhealthy days, PM2.5, ozone |
+| Traffic — NHTSA | Fatalities, fatality rate per 100k |
+| Housing — HUD FMR | Fair market rents for studio through 4-bedroom |
+| Crime — FBI CDE | Violent and property crime counts and rates |
+| Education | Graduation rates (all students and economically disadvantaged), cohort size |
+| National Rankings | Rank, percentile, and peer count for every metric available in `agg_rankings` |
+
+### Rankings table
+
+Color-coded percentile bar for each metric: green ≥75th percentile, yellow ≥50th, red <50th. Shows national rank out of peer counties.
+
+### Compare widget
+
+Enter up to 5 additional FIPS codes and click **Add** (or press Enter). Once at least one county is added, a **View comparison** link appears that calls `/api/compare/?fips=<list>` to pull side-by-side profiles as JSON.
+
+---
+
 ## Navbar Links
 
 The source labels in the top navbar are clickable links to the live API:
@@ -107,4 +136,5 @@ Each opens a paginated JSON response. Add `?state_fips=06` or `?fips=06001` to f
 - **Switch metrics without reloading** — after the first state selection all data is cached. Changing any metric or dropdown is instant.
 - **Scatter defaults change automatically** — when you select a health metric as the main metric, the county ranking chart updates accordingly; the scatter chart axes are independent and stay where you set them.
 - **Table + scatter use the same data** — both are powered by `/api/profile/`, which joins all four sources at the most recent year available for each.
-- **Missing data shows as N/A** — not every county has data for every source. CDC PLACES covers ~2,900 counties; USDA covers ~3,100; BLS is being loaded incrementally.
+- **Missing data shows as N/A** — not every county has data for every source. CDC PLACES covers ~2,900 counties; USDA covers ~3,100; FBI crime is currently 0 rows pending a NIBRS redesign.
+- **Profile page** — navigate to `/profile/<fips>/` for any county to see all ten sources, national rankings, and the compare widget.
