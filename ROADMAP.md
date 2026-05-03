@@ -175,9 +175,68 @@ Issues tracked in GitHub: https://github.com/vsukla/datamart/issues
 
 ---
 
+## Phase 3.6 — MCP Server & AI Interface 🔜
+
+Make the datamart queryable by any MCP-aware AI agent. Positions the project
+as a *complement* to Google Data Commons and federal agency MCP servers, not a competitor.
+
+| Item | Status | Notes |
+|---|---|---|
+| `datamart-mcp` server — county profile as MCP tools | 🔜 | Expose `/api/profile/`, `/api/estimates/`, `/api/aggregates/` as MCP tool calls |
+| Submit to public MCP registry | 🔜 | mcp.so or equivalent; drives organic discovery |
+| Comparison benchmark post | 🔜 | "What can Claude answer about a US county with vs. without datamart-mcp?" |
+| LLM evaluation harness | ⬜ | 100 datasets × 500 natural-language queries; Claude vs. Gemini vs. GPT-4 with/without MCP grounding |
+| Natural language query endpoint | ⬜ | `/api/ask/?q=` — structured Claude-backed query over county data |
+
+**Why now:** The MCP ecosystem grew from 1,200 to 9,400+ servers between Q1 2025 and April 2026.
+Federal agencies (Census Bureau, CMS, Treasury, GPO) are shipping their own MCP servers.
+A `datamart-mcp` that wraps our normalized, governance-tracked multi-source profile
+is a differentiated complement to single-source agency servers — not a replacement.
+
+---
+
+## Phase 3.7 — Civic Data Preservation 🔜
+
+Federal statistical agencies have experienced significant workforce disruption in 2025–2026,
+with documented slowdowns in data publication cadence and quality. Our provenance
+architecture — file hashes, schema snapshots, immutable ingestion runs — is exactly
+the right infrastructure for a trusted, versioned archive of federal datasets.
+
+| Item | Status | Notes |
+|---|---|---|
+| Versioned dataset archive (hash-verified snapshots) | 🔜 | Already built in `ingestion_runs`; surface as public archive |
+| Public dataset freshness dashboard | 🔜 | Show last-known-good version, hash, and download timestamp per source |
+| "Data availability monitor" — alert on publication delays | ⬜ | Compare expected vs. actual release dates; alert on slippage |
+| Foundation grant application (Knight / Sloan / MacArthur) | ⬜ | Civic archive framing; open-source infrastructure for journalists + researchers |
+| data.gov catalog scrape — Phase A | 🔜 | Paginate CKAN API → score 500k datasets → publish top-200 list as blog post |
+
+---
+
+## 90-Day Action Plan
+
+Concrete week-level targets based on strategic assessment.
+
+| Weeks | Action | Deliverable |
+|---|---|---|
+| 1–2 | data.gov CKAN catalog scrape + scoring function | Blog post: top-200 scored federal datasets |
+| 3–4 | `datamart-mcp` server + MCP registry submission | Comparison post: Claude with vs. without datamart-mcp |
+| 5–8 | County Statistical Profile UI (Phase 3.5) | Working fingerprint + radar + peers at `/county-profile/` |
+| 9–12 | Customer discovery sprint | 30 cold contacts in one vertical (CHNA or civic archive); 5 conversations |
+
+**Decision gate at month 9:** Does any one of these hold?
+- A paying customer or pre-commitment
+- Three identified prospects in a single vertical with the same specific pain
+- A public artifact (MCP server, benchmark, archive) that materially increased professional optionality
+
+If yes to any → continue and narrow. If no to all → declare learning victory, archive the repo cleanly.
+
+---
+
 ## Guiding principles for sequencing
 
 1. **Depth before breadth** — fully cover county geography before adding new entity types.
 2. **Pattern before platform** — repeat the ingestion pattern manually until it's painful, then abstract.
 3. **Data before features** — more datasets in the profile is more valuable than more API capabilities until the profile is comprehensive.
 4. **Tests always** — every new dataset ships with ingestion unit tests and API integration tests.
+5. **Complement, don't compete** — position as a governance-tracked, multi-source layer on top of federal MCP servers and Google Data Commons, not a replacement for either.
+6. **Ship publicly** — blog posts, MCP registry submissions, and benchmark artifacts compound as reputation and optionality; private code does not.

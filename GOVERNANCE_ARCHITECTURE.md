@@ -583,3 +583,58 @@ This becomes a required PR checklist item.
 | Surface attribution in every response | Attribution middleware; cannot be forgotten |
 | Prevent individual-level data leakage | County FIPS as minimum granularity; schema constraints |
 | Audit trail for security incident response | Access log with hashed IP + key, endpoint, sources accessed |
+
+---
+
+## Civic Data Preservation: The Architecture Doubles as an Archive
+
+The governance infrastructure described above was designed for regulatory compliance.
+It turns out it is also exactly the right architecture for a trusted public data archive.
+
+Federal statistical agencies have experienced significant workforce disruption in 2025–2026.
+Data publication delays, URL rot, and format changes from federal sources are now
+material operational risks — not hypothetical ones. Our ingestion_runs log and
+file-hash system were built to detect these changes. They also record them permanently.
+
+### How the existing architecture serves archival purposes
+
+| Governance mechanism | Archival function |
+|---|---|
+| `ingestion_runs.file_hash` (SHA-256) | Proves a specific file version was downloaded at a specific timestamp — content-verifiable |
+| `ingestion_runs.raw_file_path` | Points to a stored copy of the original source file before any transformation |
+| `schema_snapshots.schema_hash` | Detects when an agency silently changes column names or drops columns between vintages |
+| `ingestion_runs.fetched_at` | Creates a timestamped chain of custody: "we had this data on this date" |
+| `datasets.source_url` + `metadata_modified` | Tracks when upstream changed vs. when we re-ingested |
+
+### What needs to be added for the archive to be public-facing
+
+1. **Retain raw files permanently** — the current pipeline may overwrite staging files after ingestion.
+   Change to: `raw_file_path` points to an S3 object with `retention=NEVER_DELETE` lifecycle policy.
+   Cost: ~$0.023/GB/month. 500 datasets × 100MB average = ~$1.15/month.
+
+2. **Public freshness dashboard** — surface `ingestion_runs.fetched_at` and `file_hash` per dataset
+   at a public URL (e.g., `/archive/`) showing the last-known-good version and its hash.
+   Anyone can verify the hash against the stored file — no trust required.
+
+3. **Publication delay monitor** — compare `datasets.expected_release_date` (new column, set manually)
+   against the most recent `ingestion_runs.fetched_at`. If a dataset is more than 30 days overdue,
+   emit an alert (GitHub issue, email, or status page badge).
+
+```sql
+-- Proposed addition to datasets table
+ALTER TABLE datasets ADD COLUMN expected_release_month  SMALLINT;  -- 1–12 or NULL
+ALTER TABLE datasets ADD COLUMN release_cadence         VARCHAR(20);  -- 'annual', 'monthly', etc.
+ALTER TABLE datasets ADD COLUMN archive_retain_raw      BOOLEAN NOT NULL DEFAULT true;
+```
+
+### The positioning this creates
+
+When journalists, researchers, or policy advocates need to say "the federal government
+published this data showing X on this date, and it has since been removed or changed" —
+Datamart can be the authoritative citation. That is a differentiated capability no
+single-agency MCP server offers, and that Google Data Commons (optimized for current
+data, not archival chains of custody) does not prioritize.
+
+This is not a new product — it is a consequence of running the governance architecture
+we already planned to build. The marginal cost is S3 storage for raw files and a
+public-facing freshness dashboard page.

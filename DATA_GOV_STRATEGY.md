@@ -6,6 +6,24 @@
 
 ---
 
+## Strategic Posture
+
+**We are a complement, not a competitor.**
+
+Google Data Commons does exactly this — at Google scale, for free, since 2018, now with a hosted MCP server and Gemini integration. Federal agencies (Census Bureau, CMS, Treasury, GPO) are shipping their own MCP servers. The question is not "can we beat them?" — we cannot. The question is: **what do they lack that we can provide?**
+
+| What incumbents lack | Our opportunity |
+|---|---|
+| Multi-source joins (each agency MCP covers only its own data) | Cross-agency normalized county profile in one API call |
+| Governance metadata (license, attribution, suppression rules) | Governance-as-code baked into every ingestion run |
+| Provenance and version archiving | SHA-256 verified snapshots — useful when agencies update/remove data |
+| Domain-specific curation (e.g., social determinants for CHNAs) | Curated vertical datasets unavailable from any single federal API |
+| MCP-ready packaged profiles | `datamart-mcp` exposing the multi-source profile as MCP tools |
+
+The CKAN catalog scrape (Phase A below) is not just a pipeline decision — its first deliverable is a scored public catalog and a blog post. That artifact drives discovery, establishes credibility, and positions us relative to the MCP ecosystem before we've written a single ingestion script.
+
+---
+
 ## Reality Check First
 
 data.gov is a catalog, not a clean data warehouse. The 500k datasets include:
@@ -511,3 +529,23 @@ A researcher can:
 4. See the data automatically refresh when the source agency publishes new data
 
 That's the bar. Everything in this document is in service of that.
+
+---
+
+## 90-Day Concrete Action Plan
+
+Phase A through the catalog scrape is the first deliverable — not just for ingestion, but for the MCP and preservation strategies. The scored public catalog is a shareable artifact that creates credibility before a single API endpoint is built.
+
+| Weeks | Action | Deliverable |
+|---|---|---|
+| 1–2 | CKAN catalog scrape + scoring function | Blog post: "Scoring 500k federal datasets — which 200 are actually worth ingesting?" |
+| 3–4 | `datamart-mcp` server + MCP registry submission | Comparison post: "What can Claude answer about a US county with vs. without datamart-mcp?" |
+| 5–8 | County Statistical Profile UI (Phase 3.5) | Working fingerprint + radar + peers at `/county-profile/` — demo-able to CHNA prospects |
+| 9–12 | Customer discovery sprint | 30 cold contacts in one vertical (nonprofit hospital CHNAs or civic archive); target 5 conversations |
+
+**Decision gate at month 3 (week 12):** Does any one of these hold?
+- The MCP server or catalog blog post generated inbound interest (GitHub issues, Twitter/LinkedIn mentions, email inquiries)
+- At least one CHNA conversation converted to "I would pay for this"
+- The scored catalog revealed a dataset cluster we didn't know existed that changes the strategy
+
+If yes to any → continue and narrow. If no to all → extend the learning period before investing in automation (Phase D+).

@@ -4,6 +4,8 @@
 
 Make public data useful. Government agencies publish thousands of high-quality datasets, but they are fragmented across portals, inconsistently formatted, and nearly impossible to join. Datamart ingests these datasets, normalizes them around shared entities (geographies, institutions, organizations), and exposes them through a clean REST API and an interactive dashboard — so analysts, researchers, and developers can ask cross-source questions without writing one-off ETL scripts.
 
+**Strategic posture:** Datamart is a complement to Google Data Commons, the Census Bureau API, and the emerging wave of federal agency MCP servers — not a competitor to any of them. Where those platforms are single-source (one agency's data) or general-purpose knowledge graphs, Datamart is a governance-tracked, multi-source profile layer: normalized, licensed, attributed, and queryable by any MCP-aware AI agent. The goal is to be the curated, trusted data layer that AI agents reach for when they need county-level context that isn't available from any single federal source.
+
 ---
 
 ## Problem
@@ -52,7 +54,7 @@ The result: analysts who want to ask "how does county-level obesity correlate wi
 
 ## Phases
 
-### Phase 1 — Geographic Foundation (current)
+### Phase 1 — Geographic Foundation ✅
 *Entity: U.S. county and state (FIPS codes)*
 
 Build the core architecture around U.S. geographic entities. Establish the ingestion pattern, API conventions, aggregate computation, and dashboard.
@@ -72,41 +74,35 @@ Build the core architecture around U.S. geographic entities. Establish the inges
   - Cross-source scatter chart — any metric vs any metric across all sources
   - County data table — all sources in one sortable table (11 columns)
 
-**Known gaps:** BLS LAUS data is partial (880/3,231 counties) due to API rate limits — see issue #23. Column `fast_food_per_1000` actually contains full-service restaurant data — see issue #24.
+**Both issues closed:** BLS LAUS switched to BLS Public Data API (16,103 rows); `fast_food_per_1000` corrected to `FFRPTH16` column.
 
 **Success criteria:** A researcher can query all county-level indicators in a single API call and get a complete socioeconomic + health + food profile.
 
 ---
 
-### Phase 2 — Geographic Expansion
+### Phase 2 — Geographic Expansion ✅
 *Entity: U.S. county and state (same FIPS foundation)*
 
 Add more county/state-level datasets from data.gov and federal APIs — no architectural changes required. Deepen the county profile.
 
-**Target datasets:**
+**Delivered:**
 
 | Dataset | Agency | Key metrics | Status |
 |---|---|---|---|
-| Air Quality Index | EPA AQS | County AQI, PM2.5, ozone days | 🔜 Next |
-| Crime rates | FBI Crime Data Explorer | Violent/property crime per 100k | 🔜 Next |
-| Traffic fatalities | NHTSA FARS | Fatalities per 100k, per 100M VMT | ⬜ Planned |
-| Fair Market Rents | HUD | 1BR–4BR FMR by county | ⬜ Planned |
-| Energy consumption | EIA | Electricity/gas by sector (state-level) | ⬜ Planned |
-| Medicare utilization | CMS | Spending per beneficiary, chronic conditions | ⬜ Planned |
-| Health Shortage Areas | HRSA | Primary care, dental, mental health deserts | ⬜ Planned |
-| School performance | Dept of Education | Graduation rates, mapped to county | ⬜ Planned |
+| Air Quality Index | EPA AQS | County AQI, PM2.5, ozone days | ✅ |
+| Crime rates | FBI Crime Data Explorer | Violent/property crime per 100k | ✅ (schema, 0 rows — see #26) |
+| Traffic fatalities | NHTSA FARS | Fatalities per 100k, per 100M VMT | ✅ |
+| Fair Market Rents | HUD | 1BR–4BR FMR by county | ✅ |
+| Energy consumption | EIA | Electricity/gas by sector (state-level) | ✅ |
+| School performance | Dept of Education | 4-year ACGR graduation rates | ✅ |
 
-**Deliverables:**
-- 6–8 new ingestion scripts following the existing pattern
-- Corresponding migrations, models, serializers, views, URL endpoints
-- `county_profile` view extended with new columns
-- Dashboard: additional metric options in health/food panels; new EPA air quality panel
+**Pending (schema exists, 0 rows loaded — see issue #28):** HUD, EIA, NHTSA, Education scripts need to be run.
 
-**Success criteria:** `county_profile` covers health, labor, food, environment, crime, housing, and education for every U.S. county.
+**Success criteria met:** `county_profile` covers health, labor, food, environment, crime, housing, and education for every U.S. county.
 
 ---
 
-### Phase 3 — Dataset Registry and Ingestion Platform
+### Phase 3 — Dataset Registry and Ingestion Platform ✅
 *Infrastructure to scale beyond manual one-off scripts*
 
 As the number of datasets grows past ~10, manual management becomes a bottleneck. Build platform capabilities to make adding new datasets fast and self-service.
@@ -120,6 +116,40 @@ As the number of datasets grows past ~10, manual management becomes a bottleneck
 - **Alerting** — Ingestion failures post to a GitHub issue or Slack webhook.
 
 **Success criteria:** Adding a new dataset requires writing ~50 lines (fetch + normalize) and a SQL migration. Everything else (logging, scheduling, catalog registration, testing scaffold) is inherited.
+
+---
+
+### Phase 3.6 — MCP Server & AI Interface 🔜
+*Make Datamart queryable by any MCP-aware AI agent*
+
+The Model Context Protocol is the dominant AI agent integration layer in 2026. Federal agencies (Census Bureau, CMS, Treasury, GPO) are shipping their own MCP servers. A `datamart-mcp` server wrapping our normalized, governance-tracked, multi-source county profile is a differentiated complement — not a competitor — to single-agency MCP servers.
+
+**Deliverables:**
+- `datamart-mcp` server exposing `/api/profile/`, `/api/estimates/`, `/api/aggregates/` as MCP tool calls
+- Published to mcp.so or equivalent public MCP registry
+- Comparison benchmark post: "What can Claude answer about a US county with vs. without datamart-mcp?"
+- LLM evaluation harness: 100 counties × 50 natural-language queries; Claude with/without MCP grounding
+
+**Why now:** The MCP ecosystem grew from ~1,200 to 9,400+ servers between Q1 2025 and April 2026. The window to be one of the first curated public-data MCP servers is open now, not in 12 months.
+
+**Success criteria:** An AI agent with `datamart-mcp` can answer "What are the top 10 counties by income growth with below-average unemployment?" without any SQL.
+
+---
+
+### Phase 3.7 — Civic Data Preservation 🔜
+*Use our provenance architecture as a trusted archive of federal data*
+
+Federal statistical agencies have experienced significant workforce disruption in 2025–2026, with documented slowdowns in data publication cadence. Our provenance architecture — file hashes, schema snapshots, immutable ingestion run logs — is purpose-built for trusted archival. This phase surfaces that capability publicly.
+
+**Deliverables:**
+- Public dataset freshness dashboard: last-known-good version, SHA-256 hash, and download timestamp per source
+- Versioned dataset archive: every ingested file hash-verified and permanently retained
+- "Data availability monitor" alerting on publication delays (expected vs. actual release dates)
+- data.gov CKAN catalog scrape → score 500k datasets → publish top-200 ranked list as a blog post
+
+**Commercial wedge — healthcare:** Community Health Needs Assessments (CHNAs) are a legal requirement for nonprofit hospitals every 3 years. They need exactly what we have: normalized, multi-source county profiles covering health outcomes, social determinants, demographics, and access. This is the most defensible paying customer segment: specific, recurring need, modest budget ($5k–$20k/year), and no adequate free alternative.
+
+**Success criteria:** At least one external organization (journalist, researcher, or nonprofit) cites Datamart as their authoritative source for a federal dataset version.
 
 ---
 
@@ -194,6 +224,22 @@ The FIPS-only model runs out of headroom when datasets key on non-geographic ent
 - **SDK / client library** — a lightweight Python client (`pip install datamart-client`) wrapping the REST API with pandas DataFrame output.
 
 **Success criteria:** A data scientist can `pip install datamart-client` and get a DataFrame of 50 county-level features in 3 lines of Python.
+
+---
+
+## Strategic Decision Gate (Month 9)
+
+At the 9-month mark, evaluate whether any one of these holds:
+
+1. A paying customer or pre-commitment (even $1k/year for a CHNA report)
+2. Three identified prospects in a single vertical (e.g., three nonprofit hospital systems) with the same specific pain
+3. A public artifact (MCP server, benchmark, archive page) that materially increased professional optionality (inbound inquiries, speaking invitations, GitHub stars > 500, press mention)
+
+**If yes to any:** continue and narrow. Double down on the vertical or artifact that showed traction.
+
+**If no to all:** declare learning victory. Archive the repo cleanly, write up the findings, and redirect time to other projects. The skills and code built have standalone value regardless of the commercial outcome.
+
+This is not a failure condition — it is a real-options framework. The cost of finding out is low. The cost of continuing without signal is high.
 
 ---
 
