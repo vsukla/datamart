@@ -91,6 +91,69 @@ Infrastructure to make adding new datasets fast and reliable.
 
 ---
 
+## Phase 3.5 — County Statistical Profile 🔜
+
+*Issue #29*
+
+A single-county deep-dive view exposing the full multi-source attribute fingerprint. Currently a researcher must switch metrics 18 times to understand a county's full profile — this page loads everything at once as a coherent statistical portrait.
+
+| Item | Status | Notes |
+|---|---|---|
+| `GET /api/stats/percentiles/` — percentile rank for every metric per fips × year | 🔜 | Derives from existing `agg_rankings` |
+| `GET /api/stats/peers/<fips>/` — top-N nearest counties by Euclidean distance | 🔜 | New; computed over normalized profile metrics |
+| `GET /api/stats/correlations/` — Pearson r matrix within peer cohort | 🔜 | New; computed offline, cached |
+| `/county-profile/` Django view + frontend | 🔜 | Bootstrap 5 + Chart.js; mockup at `scratch/county_profile_mockup.html` |
+| Domain score cards (economy, education, health, housing, env, safety, food) | 🔜 | Percentile-based; green → red |
+| Radar chart — domain scores vs. national median | 🔜 | |
+| Attribute Fingerprint — every metric as a percentile bar | 🔜 | Direction-normalized: long bar always = better |
+| Statistical Outliers — top-N strengths and weaknesses | 🔜 | Metrics furthest from median |
+| Statistical Peers — 5 most similar counties | 🔜 | Euclidean distance on normalized metrics |
+
+---
+
+## Phase 3.6 — MCP Server & AI Interface 🔜
+
+*Issue #30*
+
+Make the datamart queryable by any MCP-aware AI agent. Positions the project
+as a *complement* to Google Data Commons and federal agency MCP servers, not a competitor.
+
+| Item | Status | Notes |
+|---|---|---|
+| `datamart-mcp` server — county profile as MCP tools | 🔜 | Expose `/api/profile/`, `/api/estimates/`, `/api/aggregates/` as MCP tool calls |
+| Submit to public MCP registry | 🔜 | mcp.so or equivalent; drives organic discovery |
+| Comparison benchmark post | 🔜 | "What can Claude answer about a US county with vs. without datamart-mcp?" |
+| LLM evaluation harness | ⬜ | 50 county questions; Claude with/without MCP grounding |
+| Natural language query endpoint | ⬜ | `/api/ask/?q=` — structured Claude-backed query over county data |
+
+**Why now:** The MCP ecosystem grew from 1,200 to 9,400+ servers between Q1 2025 and April 2026.
+Federal agencies (Census Bureau, CMS, Treasury, GPO) are shipping their own MCP servers.
+A `datamart-mcp` that wraps our normalized, governance-tracked multi-source profile
+is a differentiated complement to single-source agency servers — not a replacement.
+
+---
+
+## Phase 3.7 — Civic Data Preservation 🔜
+
+*Issues #31, #32*
+
+Federal statistical agencies have experienced significant workforce disruption in 2025–2026,
+with documented slowdowns in data publication cadence and quality. Our provenance
+architecture — file hashes, schema snapshots, immutable ingestion runs — is exactly
+the right infrastructure for a trusted, versioned archive of federal datasets.
+
+| Item | Status | Notes |
+|---|---|---|
+| data.gov CKAN catalog scrape + scoring function | 🔜 | Issue #31; paginate → score 500k → publish top-200 list as blog post |
+| Versioned dataset archive (hash-verified snapshots, permanent raw file retention) | 🔜 | Issue #32; already built in `ingestion_runs`; surface as public archive |
+| Public dataset freshness dashboard at `/archive/` | 🔜 | Issue #32; last-known-good version, hash, timestamp per source |
+| "Data availability monitor" — alert on publication delays | ⬜ | Compare expected vs. actual release dates; alert on slippage |
+| Foundation grant application (Knight / Sloan / MacArthur) | ⬜ | Civic archive framing; open-source infrastructure for journalists + researchers |
+
+**Commercial wedge — healthcare:** Community Health Needs Assessments (CHNAs) are a legal requirement for nonprofit hospitals every 3 years. They need normalized, multi-source county profiles with a trusted citation chain. This is the most defensible paying customer segment.
+
+---
+
 ## Phase 4 — New Entity Types ⬜
 
 Extend beyond county/state. Each new entity type links back to FIPS.
@@ -110,7 +173,7 @@ Extend beyond county/state. Each new entity type links back to FIPS.
 
 | Item | Status | Notes |
 |---|---|---|
-| Dynamic cross-source query API `/api/query/` | 🔭 | Client specifies fields; server builds join |
+| Dynamic cross-source query API `/api/query/` | 🔭 | Issue #22; client specifies fields; server builds join |
 | Bulk export `/api/export/` (CSV / Parquet) | 🔭 | For data science workflows |
 | Token-based auth + rate limiting | 🔭 | Issue #17 |
 | Field-level provenance in API responses | 🔭 | `_source`, `_vintage` per field group |
@@ -135,14 +198,6 @@ Pick up here next session.
 | Next step | When FBI CDE API is back up: count agencies across all 51 states; pick approach |
 | Current DB | 0 rows |
 
-### #27 — `mean_commute_minutes` NULL for ~9,000 Census rows
-
-| Field | Value |
-|---|---|
-| Cause | B08136 (aggregate travel time) is suppressed by Census for small/rural counties |
-| Impact | ~56% of rows (mostly small counties) have `mean_commute_minutes = NULL` |
-| Decision needed | Accept NULLs as expected, or find an alternative (B08135 per-mode or ACS5 subject table S0801) |
-
 ### #28 — Load data for Phase 2 sources
 
 | Source | Command | DB status |
@@ -152,9 +207,20 @@ Pick up here next session.
 | NHTSA Traffic Fatalities | `python ingestion/ingest_nhtsa_traffic.py --start 2018 --end 2022` | 0 rows |
 | Education Graduation Rates | `python ingestion/ingest_ed_graduation.py --start 2018 --end 2022` | 0 rows |
 
+Note: GitHub issue #27 is a near-duplicate of #28 (both about Phase 2 data loading). Consolidate into #28.
+
+### #33 — `mean_commute_minutes` NULL for ~56% of Census rows
+
+| Field | Value |
+|---|---|
+| Cause | B08136 (aggregate travel time) is suppressed by Census for small/rural counties |
+| Impact | ~56% of rows (mostly small counties) have `mean_commute_minutes = NULL` |
+| Decision needed | Accept NULLs as expected, or find an alternative (B08135 per-mode or ACS5 subject table S0801) |
+| Phase 3.5 note | Metric must be excluded from peer Euclidean distance calculation if >40% null |
+
 ---
 
-## Backlog (unscheduled)
+## Backlog
 
 Issues tracked in GitHub: https://github.com/vsukla/datamart/issues
 
@@ -170,45 +236,13 @@ Issues tracked in GitHub: https://github.com/vsukla/datamart/issues
 | #24 | Fix `fast_food_per_1000` column | 2e | ✅ Closed |
 | #25 | Tests for cross-source dashboard features | 2e | ✅ Closed |
 | #26 | FBI Crime: redesign ingestion around per-ORI API calls | immediate | ⬜ Open |
-| #27 | Census `mean_commute_minutes` NULL for small counties — accept or fix | data quality | ⬜ Open |
+| #27 | Load Phase 2 data (near-duplicate of #28) | immediate | ⬜ Open — consolidate into #28 |
 | #28 | Load data for Phase 2 sources (HUD, EIA, NHTSA, Education) | immediate | ⬜ Open |
-
----
-
-## Phase 3.6 — MCP Server & AI Interface 🔜
-
-Make the datamart queryable by any MCP-aware AI agent. Positions the project
-as a *complement* to Google Data Commons and federal agency MCP servers, not a competitor.
-
-| Item | Status | Notes |
-|---|---|---|
-| `datamart-mcp` server — county profile as MCP tools | 🔜 | Expose `/api/profile/`, `/api/estimates/`, `/api/aggregates/` as MCP tool calls |
-| Submit to public MCP registry | 🔜 | mcp.so or equivalent; drives organic discovery |
-| Comparison benchmark post | 🔜 | "What can Claude answer about a US county with vs. without datamart-mcp?" |
-| LLM evaluation harness | ⬜ | 100 datasets × 500 natural-language queries; Claude vs. Gemini vs. GPT-4 with/without MCP grounding |
-| Natural language query endpoint | ⬜ | `/api/ask/?q=` — structured Claude-backed query over county data |
-
-**Why now:** The MCP ecosystem grew from 1,200 to 9,400+ servers between Q1 2025 and April 2026.
-Federal agencies (Census Bureau, CMS, Treasury, GPO) are shipping their own MCP servers.
-A `datamart-mcp` that wraps our normalized, governance-tracked multi-source profile
-is a differentiated complement to single-source agency servers — not a replacement.
-
----
-
-## Phase 3.7 — Civic Data Preservation 🔜
-
-Federal statistical agencies have experienced significant workforce disruption in 2025–2026,
-with documented slowdowns in data publication cadence and quality. Our provenance
-architecture — file hashes, schema snapshots, immutable ingestion runs — is exactly
-the right infrastructure for a trusted, versioned archive of federal datasets.
-
-| Item | Status | Notes |
-|---|---|---|
-| Versioned dataset archive (hash-verified snapshots) | 🔜 | Already built in `ingestion_runs`; surface as public archive |
-| Public dataset freshness dashboard | 🔜 | Show last-known-good version, hash, and download timestamp per source |
-| "Data availability monitor" — alert on publication delays | ⬜ | Compare expected vs. actual release dates; alert on slippage |
-| Foundation grant application (Knight / Sloan / MacArthur) | ⬜ | Civic archive framing; open-source infrastructure for journalists + researchers |
-| data.gov catalog scrape — Phase A | 🔜 | Paginate CKAN API → score 500k datasets → publish top-200 list as blog post |
+| #29 | County Statistical Profile page + API endpoints | 3.5 | ⬜ Open |
+| #30 | `datamart-mcp` server | 3.6 | ⬜ Open |
+| #31 | data.gov CKAN catalog scrape + scoring function | 3.7 | ⬜ Open |
+| #32 | Civic data preservation — public freshness dashboard | 3.7 | ⬜ Open |
+| #33 | Census `mean_commute_minutes` NULL — accept or fix | data quality | ⬜ Open |
 
 ---
 
@@ -218,9 +252,9 @@ Concrete week-level targets based on strategic assessment.
 
 | Weeks | Action | Deliverable |
 |---|---|---|
-| 1–2 | data.gov CKAN catalog scrape + scoring function | Blog post: top-200 scored federal datasets |
-| 3–4 | `datamart-mcp` server + MCP registry submission | Comparison post: Claude with vs. without datamart-mcp |
-| 5–8 | County Statistical Profile UI (Phase 3.5) | Working fingerprint + radar + peers at `/county-profile/` |
+| 1–2 | data.gov CKAN catalog scrape + scoring function (issue #31) | Blog post: top-200 scored federal datasets |
+| 3–4 | `datamart-mcp` server + MCP registry submission (issue #30) | Comparison post: Claude with vs. without datamart-mcp |
+| 5–8 | County Statistical Profile UI (issue #29) | Working fingerprint + radar + peers at `/county-profile/` |
 | 9–12 | Customer discovery sprint | 30 cold contacts in one vertical (CHNA or civic archive); 5 conversations |
 
 **Decision gate at month 9:** Does any one of these hold?
