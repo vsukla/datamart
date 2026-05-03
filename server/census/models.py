@@ -2,6 +2,8 @@ from django.db import models
 
 
 class Dataset(models.Model):
+    SENSITIVITY_CHOICES = [(1, "Public domain"), (2, "Open with restrictions"), (3, "Data use agreement required")]
+
     source_key = models.CharField(max_length=30, unique=True)
     name = models.CharField(max_length=100)
     description = models.TextField(blank=True, null=True)
@@ -13,11 +15,54 @@ class Dataset(models.Model):
     last_ingested_at = models.DateTimeField(null=True)
     quality_computed_at = models.DateTimeField(null=True)
     created_at = models.DateTimeField(null=True)
+    # Governance fields (migration 015)
+    license_spdx = models.CharField(max_length=50, default="unknown")
+    commercial_ok = models.BooleanField(default=False)
+    attribution_required = models.BooleanField(default=True)
+    attribution_text = models.TextField(blank=True, null=True)
+    sensitivity_tier = models.SmallIntegerField(default=1, choices=SENSITIVITY_CHOICES)
+    min_population_suppress = models.IntegerField(null=True)
 
     class Meta:
         db_table = "datasets"
         managed = False
         ordering = ["source_key"]
+
+
+class IngestionRun(models.Model):
+    STATUS_CHOICES = [("running", "Running"), ("success", "Success"), ("error", "Error")]
+
+    source_key = models.CharField(max_length=30)
+    started_at = models.DateTimeField(auto_now_add=True)
+    finished_at = models.DateTimeField(null=True)
+    fetched_at = models.DateTimeField(null=True)
+    status = models.CharField(max_length=20, default="running", choices=STATUS_CHOICES)
+    rows_loaded = models.IntegerField(null=True)
+    rows_rejected = models.IntegerField(null=True)
+    file_hash = models.CharField(max_length=64, null=True)
+    raw_file_url = models.TextField(null=True)
+    notes = models.TextField(null=True)
+    error_message = models.TextField(null=True)
+
+    class Meta:
+        db_table = "ingestion_runs"
+        managed = False
+        ordering = ["-started_at"]
+
+
+class SchemaSnapshot(models.Model):
+    source_key = models.CharField(max_length=30)
+    ingestion_run = models.ForeignKey(
+        IngestionRun, on_delete=models.SET_NULL, null=True, related_name="schema_snapshots"
+    )
+    captured_at = models.DateTimeField(auto_now_add=True)
+    column_names = models.JSONField()
+    schema_hash = models.CharField(max_length=64)
+
+    class Meta:
+        db_table = "schema_snapshots"
+        managed = False
+        ordering = ["-captured_at"]
 
 
 class GeoEntity(models.Model):
@@ -58,6 +103,7 @@ class CensusAcs5(models.Model):
     pct_hispanic = models.DecimalField(max_digits=5, decimal_places=2, null=True)
     pct_asian = models.DecimalField(max_digits=5, decimal_places=2, null=True)
     fetched_at = models.DateTimeField(null=True)
+    ingestion_run = models.ForeignKey(IngestionRun, on_delete=models.SET_NULL, null=True, db_column="ingestion_run_id", db_constraint=False)
 
     class Meta:
         db_table = "census_acs5"
@@ -147,6 +193,7 @@ class CdcPlaces(models.Model):
     pct_no_lpa = models.DecimalField(max_digits=5, decimal_places=1, null=True)
     pct_poor_mental_health = models.DecimalField(max_digits=5, decimal_places=1, null=True)
     fetched_at = models.DateTimeField(null=True)
+    ingestion_run = models.ForeignKey(IngestionRun, on_delete=models.SET_NULL, null=True, db_column="ingestion_run_id", db_constraint=False)
 
     class Meta:
         db_table = "cdc_places"
@@ -162,6 +209,7 @@ class BlsLaus(models.Model):
     unemployed = models.IntegerField(null=True)
     unemployment_rate = models.DecimalField(max_digits=5, decimal_places=1, null=True)
     fetched_at = models.DateTimeField(null=True)
+    ingestion_run = models.ForeignKey(IngestionRun, on_delete=models.SET_NULL, null=True, db_column="ingestion_run_id", db_constraint=False)
 
     class Meta:
         db_table = "bls_laus"
@@ -178,6 +226,7 @@ class UsdaFoodEnv(models.Model):
     pct_snap = models.DecimalField(max_digits=5, decimal_places=1, null=True)
     farmers_markets = models.IntegerField(null=True)
     fetched_at = models.DateTimeField(null=True)
+    ingestion_run = models.ForeignKey(IngestionRun, on_delete=models.SET_NULL, null=True, db_column="ingestion_run_id", db_constraint=False)
 
     class Meta:
         db_table = "usda_food_env"
@@ -200,6 +249,7 @@ class EpaAqi(models.Model):
     pm25_days = models.SmallIntegerField(null=True)
     ozone_days = models.SmallIntegerField(null=True)
     fetched_at = models.DateTimeField(null=True)
+    ingestion_run = models.ForeignKey(IngestionRun, on_delete=models.SET_NULL, null=True, db_column="ingestion_run_id", db_constraint=False)
 
     class Meta:
         db_table = "epa_aqi"
@@ -216,6 +266,7 @@ class FbiCrime(models.Model):
     property_crimes = models.IntegerField(null=True)
     property_crime_rate = models.DecimalField(max_digits=8, decimal_places=1, null=True)
     fetched_at = models.DateTimeField(null=True)
+    ingestion_run = models.ForeignKey(IngestionRun, on_delete=models.SET_NULL, null=True, db_column="ingestion_run_id", db_constraint=False)
 
     class Meta:
         db_table = "fbi_crime"
@@ -229,6 +280,7 @@ class NhtsaTraffic(models.Model):
     fatalities = models.IntegerField()
     fatality_rate = models.DecimalField(max_digits=6, decimal_places=1, null=True)
     fetched_at = models.DateTimeField(null=True)
+    ingestion_run = models.ForeignKey(IngestionRun, on_delete=models.SET_NULL, null=True, db_column="ingestion_run_id", db_constraint=False)
 
     class Meta:
         db_table = "nhtsa_traffic"
@@ -248,6 +300,7 @@ class EiaEnergy(models.Model):
     gas_ind_bbtu = models.IntegerField(null=True)
     gas_total_bbtu = models.IntegerField(null=True)
     fetched_at = models.DateTimeField(null=True)
+    ingestion_run = models.ForeignKey(IngestionRun, on_delete=models.SET_NULL, null=True, db_column="ingestion_run_id", db_constraint=False)
 
     class Meta:
         db_table = "eia_energy"
@@ -264,6 +317,7 @@ class HudFmr(models.Model):
     fmr_3br = models.IntegerField(null=True)
     fmr_4br = models.IntegerField(null=True)
     fetched_at = models.DateTimeField(null=True)
+    ingestion_run = models.ForeignKey(IngestionRun, on_delete=models.SET_NULL, null=True, db_column="ingestion_run_id", db_constraint=False)
 
     class Meta:
         db_table = "hud_fmr"
@@ -279,6 +333,7 @@ class EdGraduation(models.Model):
     cohort_all = models.IntegerField(null=True)
     num_districts = models.SmallIntegerField(null=True)
     fetched_at = models.DateTimeField(null=True)
+    ingestion_run = models.ForeignKey(IngestionRun, on_delete=models.SET_NULL, null=True, db_column="ingestion_run_id", db_constraint=False)
 
     class Meta:
         db_table = "ed_graduation"
