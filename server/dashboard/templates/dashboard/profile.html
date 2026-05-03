@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{ profile.county_name }} — Datamart</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <style>
+    body { background: #f1f5f9; font-family: system-ui, sans-serif; }
+    .navbar { background: #0f172a !important; }
+    .card { border: none; box-shadow: 0 1px 4px rgba(0,0,0,.08); border-radius: 10px; }
+    .card-header {
+      background: #fff; font-weight: 600; font-size: .85rem;
+      letter-spacing: .02em; text-transform: uppercase; color: #64748b;
+      border-bottom: 1px solid #e2e8f0; border-radius: 10px 10px 0 0 !important;
+    }
+    .metric-row { display: flex; justify-content: space-between; align-items: baseline;
+                  padding: 6px 0; border-bottom: 1px solid #f1f5f9; font-size: .9rem; }
+    .metric-row:last-child { border-bottom: none; }
+    .metric-label { color: #475569; }
+    .metric-value { font-weight: 600; color: #0f172a; }
+    .metric-null  { color: #94a3b8; font-style: italic; font-weight: 400; }
+    .pct-bar-wrap { background: #e2e8f0; border-radius: 4px; height: 6px;
+                    width: 80px; display: inline-block; vertical-align: middle; overflow: hidden; }
+    .pct-bar { height: 100%; border-radius: 4px; }
+    .rank-pill { display: inline-block; padding: 1px 8px; border-radius: 99px;
+                 font-size: .72rem; font-weight: 600; background: #dbeafe; color: #1d4ed8; }
+    .hero { background: #0f172a; color: #fff; padding: 2rem 0 1.5rem; }
+    .hero .fips-badge { background: #1e293b; color: #94a3b8; font-size: .75rem;
+                        padding: 2px 8px; border-radius: 4px; font-family: monospace; }
+    .source-tag { font-size: .7rem; color: #94a3b8; }
+    .compare-input { max-width: 320px; }
+  </style>
+</head>
+<body>
+
+<nav class="navbar navbar-dark px-4 py-3 d-flex align-items-center gap-3">
+  <a href="/dashboard/" class="navbar-brand fw-bold fs-5 me-2 text-decoration-none text-white">Datamart</a>
+  <a href="/dashboard/" class="text-white-50 small text-decoration-none">← Dashboard</a>
+</nav>
+
+<div class="hero">
+  <div class="container">
+    <div class="d-flex align-items-center gap-3 flex-wrap">
+      <div>
+        <h2 class="mb-1 fw-bold">{{ profile.county_name }}</h2>
+        <span class="fips-badge">FIPS {{ profile.fips }}</span>
+      </div>
+      {% if profile.population %}
+      <div class="ms-auto text-end">
+        <div class="fs-4 fw-bold">{{ profile.population|floatformat:0 }}</div>
+        <div class="text-white-50 small">population</div>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<div class="container py-4">
+
+  <!-- Compare widget -->
+  <div class="card mb-4">
+    <div class="card-header">Compare Counties</div>
+    <div class="card-body">
+      <div class="d-flex gap-2 align-items-center flex-wrap">
+        <input id="compareInput" type="text" class="form-control compare-input"
+               placeholder="Enter FIPS code (e.g. 36061)" maxlength="5">
+        <button class="btn btn-primary btn-sm" onclick="addCompare()">Add</button>
+        <span class="text-muted small">or</span>
+        <a id="compareLink" href="#" class="btn btn-outline-secondary btn-sm d-none">
+          View comparison →
+        </a>
+      </div>
+      <div id="compareChips" class="d-flex gap-2 flex-wrap mt-2"></div>
+    </div>
+  </div>
+
+  <div class="row g-4">
+
+    <!-- Census ACS5 -->
+    <div class="col-md-6">
+      <div class="card h-100">
+        <div class="card-header d-flex justify-content-between">
+          Census ACS5
+          {% if profile.census_year %}<span class="source-tag">{{ profile.census_year }}</span>{% endif %}
+        </div>
+        <div class="card-body">
+          {% include "dashboard/_metric.html" with label="Median Household Income" value=profile.median_income prefix="$" %}
+          {% include "dashboard/_metric.html" with label="Median Home Value" value=profile.median_home_value prefix="$" %}
+          {% include "dashboard/_metric.html" with label="Poverty Rate" value=profile.pct_poverty suffix="%" pct=True %}
+          {% include "dashboard/_metric.html" with label="Bachelor's Degree +" value=profile.pct_bachelors suffix="%" pct=True %}
+          {% include "dashboard/_metric.html" with label="Owner-Occupied" value=profile.pct_owner_occupied suffix="%" pct=True %}
+          {% include "dashboard/_metric.html" with label="Health Insured" value=profile.pct_health_insured suffix="%" pct=True %}
+          {% include "dashboard/_metric.html" with label="Mean Commute" value=profile.mean_commute_minutes suffix=" min" %}
+          {% include "dashboard/_metric.html" with label="White" value=profile.pct_white suffix="%" %}
+          {% include "dashboard/_metric.html" with label="Black" value=profile.pct_black suffix="%" %}
+          {% include "dashboard/_metric.html" with label="Hispanic" value=profile.pct_hispanic suffix="%" %}
+          {% include "dashboard/_metric.html" with label="Asian" value=profile.pct_asian suffix="%" %}
+        </div>
+      </div>
+    </div>
+
+    <!-- CDC PLACES -->
+    <div class="col-md-6">
+      <div class="card h-100">
+        <div class="card-header d-flex justify-content-between">
+          Health — CDC PLACES
+          {% if profile.places_year %}<span class="source-tag">{{ profile.places_year }}</span>{% endif %}
+        </div>
+        <div class="card-body">
+          {% include "dashboard/_metric.html" with label="Obesity" value=profile.pct_obesity suffix="%" pct=True %}
+          {% include "dashboard/_metric.html" with label="Diabetes" value=profile.pct_diabetes suffix="%" pct=True %}
+          {% include "dashboard/_metric.html" with label="Current Smoking" value=profile.pct_smoking suffix="%" pct=True %}
+          {% include "dashboard/_metric.html" with label="Hypertension" value=profile.pct_hypertension suffix="%" pct=True %}
+          {% include "dashboard/_metric.html" with label="Depression" value=profile.pct_depression suffix="%" pct=True %}
+          {% include "dashboard/_metric.html" with label="No Physical Activity" value=profile.pct_no_lpa suffix="%" pct=True %}
+          {% include "dashboard/_metric.html" with label="Poor Mental Health" value=profile.pct_poor_mental_health suffix="%" pct=True %}
+        </div>
+      </div>
+    </div>
+
+    <!-- BLS Labor -->
+    <div class="col-md-6">
+      <div class="card h-100">
+        <div class="card-header d-flex justify-content-between">
+          Labor — BLS LAUS
+          {% if profile.bls_year %}<span class="source-tag">{{ profile.bls_year }}</span>{% endif %}
+        </div>
+        <div class="card-body">
+          {% include "dashboard/_metric.html" with label="Labor Force" value=profile.labor_force %}
+          {% include "dashboard/_metric.html" with label="Employed" value=profile.employed %}
+          {% include "dashboard/_metric.html" with label="Unemployed" value=profile.unemployed %}
+          {% include "dashboard/_metric.html" with label="Unemployment Rate" value=profile.bls_unemployment_rate suffix="%" pct=True %}
+        </div>
+      </div>
+    </div>
+
+    <!-- USDA Food -->
+    <div class="col-md-6">
+      <div class="card h-100">
+        <div class="card-header d-flex justify-content-between">
+          Food — USDA Food Environment
+          {% if profile.usda_year %}<span class="source-tag">{{ profile.usda_year }}</span>{% endif %}
+        </div>
+        <div class="card-body">
+          {% include "dashboard/_metric.html" with label="Low Food Access" value=profile.pct_low_food_access suffix="%" pct=True %}
+          {% include "dashboard/_metric.html" with label="Grocery Stores per 1,000" value=profile.groceries_per_1000 %}
+          {% include "dashboard/_metric.html" with label="Fast Food per 1,000" value=profile.fast_food_per_1000 %}
+          {% include "dashboard/_metric.html" with label="SNAP Participation" value=profile.pct_snap suffix="%" pct=True %}
+          {% include "dashboard/_metric.html" with label="Farmers Markets" value=profile.farmers_markets %}
+        </div>
+      </div>
+    </div>
+
+    <!-- EPA AQI -->
+    <div class="col-md-6">
+      <div class="card h-100">
+        <div class="card-header d-flex justify-content-between">
+          Air Quality — EPA AQI
+          {% if profile.aqi_year %}<span class="source-tag">{{ profile.aqi_year }}</span>{% endif %}
+        </div>
+        <div class="card-body">
+          {% include "dashboard/_metric.html" with label="Median AQI" value=profile.median_aqi %}
+          {% include "dashboard/_metric.html" with label="Max AQI" value=profile.max_aqi %}
+          {% include "dashboard/_metric.html" with label="Good Days" value=profile.good_days %}
+          {% include "dashboard/_metric.html" with label="Moderate Days" value=profile.moderate_days %}
+          {% include "dashboard/_metric.html" with label="Unhealthy (Sensitive) Days" value=profile.unhealthy_sensitive_days %}
+          {% include "dashboard/_metric.html" with label="Unhealthy Days" value=profile.unhealthy_days %}
+          {% include "dashboard/_metric.html" with label="PM2.5 Days" value=profile.pm25_days %}
+          {% include "dashboard/_metric.html" with label="Ozone Days" value=profile.ozone_days %}
+        </div>
+      </div>
+    </div>
+
+    <!-- NHTSA Traffic -->
+    <div class="col-md-6">
+      <div class="card h-100">
+        <div class="card-header d-flex justify-content-between">
+          Traffic — NHTSA
+          {% if profile.traffic_year %}<span class="source-tag">{{ profile.traffic_year }}</span>{% endif %}
+        </div>
+        <div class="card-body">
+          {% include "dashboard/_metric.html" with label="Fatalities" value=profile.fatalities %}
+          {% include "dashboard/_metric.html" with label="Fatality Rate (per 100k)" value=profile.fatality_rate %}
+        </div>
+      </div>
+    </div>
+
+    <!-- HUD Housing -->
+    <div class="col-md-6">
+      <div class="card h-100">
+        <div class="card-header d-flex justify-content-between">
+          Housing — HUD Fair Market Rents
+          {% if profile.hud_year %}<span class="source-tag">{{ profile.hud_year }}</span>{% endif %}
+        </div>
+        <div class="card-body">
+          {% include "dashboard/_metric.html" with label="Studio" value=profile.fmr_0br prefix="$" %}
+          {% include "dashboard/_metric.html" with label="1-Bedroom" value=profile.fmr_1br prefix="$" %}
+          {% include "dashboard/_metric.html" with label="2-Bedroom" value=profile.fmr_2br prefix="$" %}
+          {% include "dashboard/_metric.html" with label="3-Bedroom" value=profile.fmr_3br prefix="$" %}
+          {% include "dashboard/_metric.html" with label="4-Bedroom" value=profile.fmr_4br prefix="$" %}
+        </div>
+      </div>
+    </div>
+
+    <!-- FBI Crime -->
+    <div class="col-md-6">
+      <div class="card h-100">
+        <div class="card-header d-flex justify-content-between">
+          Crime — FBI CDE
+          {% if profile.crime_year %}<span class="source-tag">{{ profile.crime_year }}</span>{% endif %}
+        </div>
+        <div class="card-body">
+          {% include "dashboard/_metric.html" with label="Violent Crimes" value=profile.violent_crimes %}
+          {% include "dashboard/_metric.html" with label="Violent Crime Rate (per 100k)" value=profile.violent_crime_rate %}
+          {% include "dashboard/_metric.html" with label="Property Crimes" value=profile.property_crimes %}
+          {% include "dashboard/_metric.html" with label="Property Crime Rate (per 100k)" value=profile.property_crime_rate %}
+        </div>
+      </div>
+    </div>
+
+    <!-- Education -->
+    <div class="col-md-6">
+      <div class="card h-100">
+        <div class="card-header d-flex justify-content-between">
+          Education — Graduation Rates
+          {% if profile.grad_year %}<span class="source-tag">{{ profile.grad_year }}</span>{% endif %}
+        </div>
+        <div class="card-body">
+          {% include "dashboard/_metric.html" with label="Grad Rate (All)" value=profile.grad_rate_all suffix="%" pct=True %}
+          {% include "dashboard/_metric.html" with label="Grad Rate (Econ. Disadvantaged)" value=profile.grad_rate_ecd suffix="%" pct=True %}
+          {% include "dashboard/_metric.html" with label="Cohort Size" value=profile.cohort_all %}
+          {% include "dashboard/_metric.html" with label="Districts" value=profile.num_districts %}
+        </div>
+      </div>
+    </div>
+
+    <!-- Rankings -->
+    <div class="col-12">
+      <div class="card">
+        <div class="card-header">National Rankings</div>
+        <div class="card-body p-0">
+          <table class="table table-sm table-hover mb-0" id="rankingsTable">
+            <thead class="table-light">
+              <tr>
+                <th>Metric</th>
+                <th>Value</th>
+                <th>Rank</th>
+                <th>Percentile</th>
+                <th>Among</th>
+              </tr>
+            </thead>
+            <tbody id="rankingsTbody">
+              <tr><td colspan="5" class="text-center text-muted py-3">Loading rankings…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /row -->
+</div><!-- /container -->
+
+<script>
+const RANKINGS = {{ rankings_json|safe }};
+const CURRENT_FIPS = "{{ profile.fips }}";
+
+const METRIC_LABELS = {
+  median_income: "Median Income",
+  pct_bachelors: "Bachelor's Degree (%)",
+  median_home_value: "Median Home Value",
+  pct_owner_occupied: "Owner-Occupied (%)",
+  pct_poverty: "Poverty Rate (%)",
+  unemployment_rate: "Unemployment Rate (%)",
+  pct_obesity: "Obesity (%)",
+  pct_diabetes: "Diabetes (%)",
+  pct_smoking: "Smoking (%)",
+  pct_hypertension: "Hypertension (%)",
+  pct_depression: "Depression (%)",
+  pct_no_lpa: "No Physical Activity (%)",
+  pct_poor_mental_health: "Poor Mental Health (%)",
+  bls_unemployment_rate: "BLS Unemployment Rate (%)",
+  fatality_rate: "Traffic Fatality Rate",
+  violent_crime_rate: "Violent Crime Rate",
+  property_crime_rate: "Property Crime Rate",
+  median_aqi: "Median AQI",
+  pct_low_food_access: "Low Food Access (%)",
+  pct_snap: "SNAP Participation (%)",
+  grad_rate_all: "Graduation Rate (%)",
+};
+
+function fmt(v) {
+  if (v === null || v === undefined) return "—";
+  const n = parseFloat(v);
+  return isNaN(n) ? v : n.toLocaleString(undefined, {maximumFractionDigits: 1});
+}
+
+function pctColor(p) {
+  if (p === null) return "#e2e8f0";
+  if (p >= 75) return "#86efac";
+  if (p >= 50) return "#fde68a";
+  return "#fca5a5";
+}
+
+(function renderRankings() {
+  const tbody = document.getElementById("rankingsTbody");
+  if (!RANKINGS.length) {
+    tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted py-3">No ranking data available</td></tr>';
+    return;
+  }
+  tbody.innerHTML = RANKINGS.map(r => {
+    const label = METRIC_LABELS[r.metric] || r.metric;
+    const pct = r.percentile !== null ? parseFloat(r.percentile) : null;
+    const barColor = pctColor(pct);
+    const bar = pct !== null
+      ? `<div class="pct-bar-wrap"><div class="pct-bar" style="width:${pct}%;background:${barColor}"></div></div> ${pct.toFixed(1)}th`
+      : "—";
+    return `<tr>
+      <td>${label}</td>
+      <td>${fmt(r.value)}</td>
+      <td>${r.rank !== null ? "#" + r.rank.toLocaleString() : "—"}</td>
+      <td>${bar}</td>
+      <td>${r.peer_count !== null ? r.peer_count.toLocaleString() : "—"}</td>
+    </tr>`;
+  }).join("");
+})();
+
+// Compare widget
+const compareFips = new Set();
+
+function updateCompareLink() {
+  const link = document.getElementById("compareLink");
+  if (compareFips.size === 0) { link.classList.add("d-none"); return; }
+  const all = [CURRENT_FIPS, ...compareFips].join(",");
+  link.href = `/api/compare/?fips=${all}`;
+  link.classList.remove("d-none");
+}
+
+function addCompare() {
+  const input = document.getElementById("compareInput");
+  const val = input.value.trim();
+  if (!val.match(/^\d{5}$/) || val === CURRENT_FIPS || compareFips.has(val) || compareFips.size >= 5) {
+    input.classList.add("is-invalid");
+    setTimeout(() => input.classList.remove("is-invalid"), 1200);
+    return;
+  }
+  compareFips.add(val);
+  input.value = "";
+  renderChips();
+  updateCompareLink();
+}
+
+function removeCompare(fips) {
+  compareFips.delete(fips);
+  renderChips();
+  updateCompareLink();
+}
+
+function renderChips() {
+  const container = document.getElementById("compareChips");
+  container.innerHTML = [...compareFips].map(f =>
+    `<span class="badge bg-light text-dark border d-flex align-items-center gap-1">
+       ${f} <button type="button" class="btn-close btn-close-sm" style="font-size:.6rem"
+                    onclick="removeCompare('${f}')"></button>
+     </span>`
+  ).join("");
+}
+
+document.getElementById("compareInput").addEventListener("keydown", e => {
+  if (e.key === "Enter") addCompare();
+});
+</script>
+
+</body>
+</html>

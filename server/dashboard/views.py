@@ -2,8 +2,9 @@ import json
 from django.core.serializers.json import DjangoJSONEncoder
 from django.db.models import Avg, Q
 from django.db.models.functions import Substr
+from django.http import Http404
 from django.views.generic import TemplateView
-from census.models import GeoEntity, AggNationalSummary, AggStateSummary, AggYoY, CdcPlaces, UsdaFoodEnv, Dataset
+from census.models import GeoEntity, AggNationalSummary, AggStateSummary, AggYoY, CdcPlaces, UsdaFoodEnv, Dataset, CountyProfile, AggRanking
 
 METRIC_LABELS = {
     "median_income":      "Median Income",
@@ -110,4 +111,33 @@ class DashboardView(TemplateView):
             ],
             "years": list(range(2018, 2023)),
         })
+        return ctx
+
+
+class ProfileView(TemplateView):
+    template_name = "dashboard/profile.html"
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        fips = self.kwargs["fips"]
+        try:
+            profile = CountyProfile.objects.get(fips=fips)
+        except CountyProfile.DoesNotExist:
+            raise Http404
+
+        rankings = list(
+            AggRanking.objects.filter(fips=fips)
+            .order_by("metric", "-year")
+            .values("metric", "year", "value", "rank", "percentile", "peer_count")
+        )
+        # keep most recent year per metric
+        seen = set()
+        latest_rankings = []
+        for r in rankings:
+            if r["metric"] not in seen:
+                seen.add(r["metric"])
+                latest_rankings.append(r)
+
+        ctx["profile"] = profile
+        ctx["rankings_json"] = json.dumps(latest_rankings, cls=DjangoJSONEncoder)
         return ctx

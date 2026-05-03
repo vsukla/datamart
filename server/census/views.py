@@ -379,3 +379,35 @@ class CountyProfileView(generics.ListAPIView):
         if state_fips:
             qs = qs.filter(state_fips=state_fips)
         return qs
+
+
+class CountyProfileDetailView(generics.RetrieveAPIView):
+    """GET /api/profile/<fips>/  — single county full profile"""
+    serializer_class = CountyProfileSerializer
+    queryset = CountyProfile.objects.all()
+    lookup_field = "fips"
+
+
+class CountyCompareView(generics.ListAPIView):
+    """GET /api/compare/?fips=06037,36061  — up to 6 counties side-by-side"""
+    serializer_class = CountyProfileSerializer
+
+    def get_queryset(self):
+        raw = self.request.query_params.get("fips", "")
+        fips_list = [f.strip() for f in raw.split(",") if f.strip()][:6]
+        if not fips_list:
+            return CountyProfile.objects.none()
+        return CountyProfile.objects.filter(fips__in=fips_list)
+
+
+class CountyRankingsView(generics.ListAPIView):
+    """GET /api/rankings/<fips>/  — all ranking metrics for one county; optional ?year"""
+    serializer_class = AggRankingSerializer
+
+    def get_queryset(self):
+        fips = self.kwargs["fips"]
+        year = self.request.query_params.get("year")
+        qs = AggRanking.objects.filter(fips=fips)
+        if year:
+            qs = qs.filter(year=year)
+        return qs.order_by("metric", "-year")

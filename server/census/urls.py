@@ -4,7 +4,8 @@ from .views import (
     GeoListView, GeoDetailView, EstimatesListView,
     AggNationalSummaryView, AggStateSummaryView, AggRankingsView, AggYoYView,
     CdcPlacesView, BlsLausView, UsdaFoodEnvView, EpaAqiView, FbiCrimeView,
-    HudFmrView, EiaEnergyView, NhtsaTrafficView, EdGraduationView, CountyProfileView,
+    HudFmrView, EiaEnergyView, NhtsaTrafficView, EdGraduationView,
+    CountyProfileView, CountyProfileDetailView, CountyCompareView, CountyRankingsView,
 )
 
 urlpatterns = [
@@ -26,4 +27,7 @@ urlpatterns = [
     path("traffic/", NhtsaTrafficView.as_view()),
     path("graduation/", EdGraduationView.as_view()),
     path("profile/", CountyProfileView.as_view()),
+    path("profile/<str:fips>/", CountyProfileDetailView.as_view()),
+    path("compare/", CountyCompareView.as_view()),
+    path("rankings/<str:fips>/", CountyRankingsView.as_view()),
 ]

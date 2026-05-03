@@ -847,6 +847,118 @@ class CountyProfileAPITest(TestCase):
         self.assertIn("count", data)
         self.assertIn("results", data)
 
+    # --- /api/profile/<fips>/ ---
+
+    def test_profile_detail_returns_single(self):
+        resp = self.client.get("/api/profile/06037/")
+        self.assertEqual(resp.status_code, 200)
+        r = resp.json()
+        self.assertEqual(r["fips"], "06037")
+        self.assertEqual(r["county_name"], "Los Angeles County, California")
+
+    def test_profile_detail_404_on_unknown_fips(self):
+        resp = self.client.get("/api/profile/99999/")
+        self.assertEqual(resp.status_code, 404)
+
+    def test_profile_detail_not_paginated(self):
+        resp = self.client.get("/api/profile/06037/")
+        data = resp.json()
+        self.assertNotIn("count", data)
+        self.assertIn("fips", data)
+
+    # --- /api/compare/ ---
+
+    def test_compare_two_counties(self):
+        resp = self.client.get("/api/compare/?fips=06037,48201")
+        data = resp.json()
+        self.assertEqual(data["count"], 2)
+        fips_returned = {r["fips"] for r in data["results"]}
+        self.assertEqual(fips_returned, {"06037", "48201"})
+
+    def test_compare_single_county(self):
+        resp = self.client.get("/api/compare/?fips=06037")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()["count"], 1)
+
+    def test_compare_empty_returns_empty(self):
+        resp = self.client.get("/api/compare/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()["count"], 0)
+
+    def test_compare_caps_at_six(self):
+        # 7 fips supplied; only 2 exist in test data so count <= 2, but no error
+        resp = self.client.get("/api/compare/?fips=06037,48201,11001,12001,13001,17001,36001")
+        self.assertEqual(resp.status_code, 200)
+
+
+class CountyRankingsAPITest(TestCase):
+    """Tests for /api/rankings/<fips>/."""
+
+    @classmethod
+    def setUpClass(cls):
+        with connection.schema_editor() as editor:
+            editor.create_model(AggRanking)
+        super().setUpClass()
+
+    @classmethod
+    def tearDownClass(cls):
+        super().tearDownClass()
+        with connection.schema_editor() as editor:
+            editor.delete_model(AggRanking)
+
+    @classmethod
+    def setUpTestData(cls):
+        AggRanking.objects.create(
+            fips="06037", state_fips="06", geo_type="county",
+            year=2022, metric="median_income",
+            value="75000.00", rank=250, percentile="90.50", peer_count=3000,
+        )
+        AggRanking.objects.create(
+            fips="06037", state_fips="06", geo_type="county",
+            year=2021, metric="median_income",
+            value="72000.00", rank=280, percentile="88.00", peer_count=3000,
+        )
+        AggRanking.objects.create(
+            fips="06037", state_fips="06", geo_type="county",
+            year=2022, metric="pct_poverty",
+            value="14.20", rank=800, percentile="40.00", peer_count=3000,
+        )
+        AggRanking.objects.create(
+            fips="48201", state_fips="48", geo_type="county",
+            year=2022, metric="median_income",
+            value="62000.00", rank=1200, percentile="60.00", peer_count=3000,
+        )
+
+    def test_rankings_returns_all_for_fips(self):
+        resp = self.client.get("/api/rankings/06037/")
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        # 3 rows for 06037 (2 years of median_income + 1 pct_poverty)
+        self.assertEqual(data["count"], 3)
+
+    def test_rankings_excludes_other_fips(self):
+        resp = self.client.get("/api/rankings/06037/")
+        fips_set = {r["fips"] for r in resp.json()["results"]}
+        self.assertEqual(fips_set, {"06037"})
+
+    def test_rankings_filter_year(self):
+        resp = self.client.get("/api/rankings/06037/?year=2022")
+        data = resp.json()
+        self.assertEqual(data["count"], 2)
+        for r in data["results"]:
+            self.assertEqual(r["year"], 2022)
+
+    def test_rankings_fields(self):
+        resp = self.client.get("/api/rankings/06037/")
+        r = resp.json()["results"][0]
+        for f in ["fips", "metric", "year", "value", "rank", "percentile", "peer_count"]:
+            self.assertIn(f, r)
+
+    def test_rankings_unknown_fips_returns_empty(self):
+        resp = self.client.get("/api/rankings/99999/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()["count"], 0)
+
 
 class EpaAqiAPITest(TestCase):
     """Tests for /api/aqi/."""

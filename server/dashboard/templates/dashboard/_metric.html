@@ -1,0 +1,10 @@
+<div class="metric-row">
+  <span class="metric-label">{{ label }}</span>
+  {% if value is not None %}
+    <span class="metric-value">
+      {% if prefix %}{{ prefix }}{% endif %}{{ value }}{% if suffix %}{{ suffix }}{% endif %}
+    </span>
+  {% else %}
+    <span class="metric-null">—</span>
+  {% endif %}
+</div>
