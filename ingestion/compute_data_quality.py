@@ -116,9 +116,9 @@ def get_last_fetched(conn, table: str) -> datetime | None:
     return val
 
 
-def update_catalog(conn, source_key: str, table: str, row_count: int, null_rates: dict) -> None:
+def update_catalog(conn, source_key: str, row_count: int, null_rates: dict) -> None:
     import json
-    last_ingested = get_last_fetched(conn, table)
+    last_ingested = get_last_fetched(conn, source_key)
     sql = """
         UPDATE datasets
         SET row_count           = %(row_count)s,
@@ -143,7 +143,7 @@ def run(conn) -> None:
         log.info("Computing quality for %s (%s)...", source_key, table)
         try:
             row_count, null_rates = compute_quality(conn, table, metric_cols)
-            update_catalog(conn, source_key, table, row_count, null_rates)
+            update_catalog(conn, source_key, row_count, null_rates)
             log.info("  %s: %d rows, null rates: %s", source_key, row_count,
                      {k: f"{v:.1%}" if v is not None else "n/a"
                       for k, v in null_rates.items()})

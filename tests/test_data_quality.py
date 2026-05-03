@@ -83,8 +83,9 @@ class TestRun:
         assert mock_u.call_count == len(SOURCE_CONFIG)
 
     def test_source_config_covers_all_tables(self):
-        expected = {"census_acs5", "cdc_places", "bls_laus",
-                    "usda_food_env", "epa_aqi", "fbi_crime"}
+        expected = {"census_acs5", "cdc_places", "bls_laus", "usda_food_env",
+                    "epa_aqi", "fbi_crime", "hud_fmr", "eia_energy",
+                    "nhtsa_traffic", "ed_graduation"}
         assert set(SOURCE_CONFIG.keys()) == expected
 
     def test_run_continues_after_error(self):
